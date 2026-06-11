@@ -66,8 +66,9 @@ COMMIT_GUIDANCE = """
 
 Committing your work (you have --commit; do this yourself — subagents never \
 commit):
-- Branch first: if the workdir is on its default branch (main/master), create a \
-descriptive feature branch before committing.
+- Commit onto the CURRENT branch — the harness has already moved a --commit run \
+onto a dedicated branch off main/master. Never switch to, or commit on, \
+main/master.
 - Commit in logical units, NOT one catch-all dump: when the work spans separable \
 concerns — implementation vs tests vs docs, or two independent changes — make a \
 SEPARATE commit for each, in a sensible order, each message traceable to its one \

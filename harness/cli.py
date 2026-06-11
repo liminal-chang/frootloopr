@@ -347,6 +347,26 @@ def _git_commits_since(workdir: Path, base: str | None) -> tuple[str | None, lis
     return (branch or None), commits
 
 
+def _ensure_commit_branch(workdir: Path, run_id: str, console: StatusConsole) -> None:
+    """For --commit runs: if the repo is on its default branch, switch to a fresh
+    harness/<run_id> branch BEFORE the run — so it physically cannot commit to
+    main/master, regardless of whether the lead remembers to branch. Deterministic
+    enforcement beats prose for a hard rule. No-op if already on a feature branch."""
+    if not (workdir / ".git").exists():
+        return
+    rc, branch = _git(workdir, "rev-parse", "--abbrev-ref", "HEAD")
+    if rc != 0 or branch not in ("main", "master"):
+        return  # already on a feature branch, or detached/unborn — leave it
+    if _git_head(workdir) is None:
+        return  # no commits yet to branch from; the lead will init + branch itself
+    new = "harness/" + run_id.removeprefix("run_")
+    rc, _out = _git(workdir, "switch", "-c", new)
+    if rc != 0:
+        rc, _out = _git(workdir, "checkout", "-b", new)  # older git without `switch`
+    console.log(dim(f"· --commit: branched to {new} (was on {branch})" if rc == 0
+                    else f"· --commit: could not create a branch off {branch}"))
+
+
 def _report_changes(workdir: Path, baseline: set[str] | None) -> None:
     after = _git_status_set(workdir)
     if after is None or baseline is None:
@@ -577,6 +597,8 @@ async def _execute(args: argparse.Namespace) -> int:
     console.log(f"{bold(runner.run_id)}  {dim('notes: ' + str(runner.notes_dir))}")
     baseline = _git_status_set(runner.workdir)
     baseline_head = _git_head(runner.workdir)  # to report commits the run makes (--commit)
+    if config.commit:
+        _ensure_commit_branch(runner.workdir, runner.run_id, console)
     events_log.write("run", "run_start", mirror=True, run_id=runner.run_id, mode=console.mode)
 
     stop = asyncio.Event()

@@ -309,6 +309,37 @@ def test_run_summary_and_naming():
     print("ok: self-identifying run id, summary sections + commits, INDEX append, prefix resolution")
 
 
+def test_ensure_commit_branch():
+    import contextlib
+    import io
+    import subprocess
+
+    from harness.cli import _ensure_commit_branch
+    from harness.status import StatusConsole
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = Path(d)
+        console = StatusConsole(wd, enabled=False)
+        g = lambda *a: subprocess.run(["git", "-C", str(wd), *a], capture_output=True, text=True, check=True)
+        cur = lambda: subprocess.run(["git", "-C", str(wd), "rev-parse", "--abbrev-ref", "HEAD"],
+                                     capture_output=True, text=True).stdout.strip()
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            _ensure_commit_branch(wd, "run_x", console)  # not a repo: no-op, no raise
+
+        g("init", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (wd / "a").write_text("a"); g("add", "-A"); g("commit", "-m", "init")
+        with contextlib.redirect_stderr(io.StringIO()):
+            _ensure_commit_branch(wd, "run_20260101_000000_proj_task", console)
+        assert cur() == "harness/20260101_000000_proj_task", cur()  # branched off main
+
+        g("switch", "-c", "feature/x")  # already on a feature branch
+        with contextlib.redirect_stderr(io.StringIO()):
+            _ensure_commit_branch(wd, "run_y", console)
+        assert cur() == "feature/x"  # left untouched
+    print("ok: --commit branches off main/master only, leaving existing feature branches alone")
+
+
 def test_commit_guidance():
     from harness.runner import COMMIT_GUIDANCE, LEAD_GUIDANCE, RunConfig, Runner
 
@@ -364,6 +395,7 @@ if __name__ == "__main__":
     test_watch_render_and_resolve()
     test_default_mcp()
     test_run_summary_and_naming()
+    test_ensure_commit_branch()
     test_commit_guidance()
     test_context_bar()
     test_workspace_sandbox()
