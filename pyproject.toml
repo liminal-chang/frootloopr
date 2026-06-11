@@ -1,0 +1,19 @@
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Multi-model agent harness: orchestrator + subagents, MCP result offloading, shared workspace, persistent memory"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.50",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+harness = "harness.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["harness", "harness.providers", "harness.backends"]
