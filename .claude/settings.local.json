@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl -s \"https://api.github.com/repos/multica-ai/andrej-karpathy-skills/git/trees/main?recursive=1\")",
-      "Bash(curl -s \"https://raw.githubusercontent.com/multica-ai/andrej-karpathy-skills/main/CLAUDE.md\")",
-      "Bash(curl -s \"https://raw.githubusercontent.com/multica-ai/andrej-karpathy-skills/main/skills/karpathy-guidelines/SKILL.md\")"
-    ]
-  }
-}

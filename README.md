@@ -60,12 +60,14 @@ Launch directory doesn't matter for artifacts: `runs/` and `memory/` always
 anchor to this folder (override with `--runs-dir` / `--memory-dir`), and agents
 execute wherever `--workdir` points (default: your current directory).
 
-**From Claude Code:** the `/orchestrate` skill (`~/.claude/skills/orchestrate/`)
-lets any interactive session drive frootloopr — `/orchestrate build a snake game
-in ~/Desktop/demo`. The session picks the right subcommand and flags, runs it,
-and reports back. (Note: invoked that way, the plan gate auto-approves since
-there's no TTY; ask for the command instead if you want to gate the plan
-yourself.)
+**From Claude Code — the `/orchestrate` skill.** This repo ships a project skill at
+`.claude/skills/orchestrate/`, so any Claude Code session working in the clone can
+drive frootloopr — `/orchestrate build a snake game in ~/Desktop/demo`. The session
+picks the subcommand and flags, runs it, and reports back. The skill resolves the
+repo root from its own location, so it works in any clone with no path editing —
+it just needs the Setup above done (the `.venv` + a logged-in `claude` CLI).
+(Invoked this way the plan gate auto-approves since there's no TTY; ask for the
+command instead if you want to gate the plan yourself.)
 
 ## Run
 
@@ -261,12 +263,20 @@ what-changed summary.
 ### Interactive mode (free byproduct)
 
 The same MCP server mounts in a normal interactive Claude Code session, giving it
-the spawn + memory tools directly. Set the `FROOTLOOPR_*` env vars (see
-`frootloopr/mcp_server.py`) in the server entry:
+the `spawn_claude` / `spawn_codex` / `spawn_gemini` + `memory_read/write/delete`
+tools directly. Register it once (run from the repo root so `$PWD` resolves):
 
 ```sh
-claude mcp add frootloopr -- .venv/bin/python -m frootloopr.mcp_server
+claude mcp add frootloopr \
+  -e FROOTLOOPR_MEMORY_DIR="$PWD/memory" \
+  -- "$PWD/.venv/bin/python" -m frootloopr.mcp_server
 ```
+
+`-e KEY=value` sets env vars (`--` separates the launch command). All `FROOTLOOPR_*`
+vars have sensible defaults (see `frootloopr/mcp_server.py`); `MEMORY_DIR` is the
+one worth setting so the interactive session shares the same persistent memory as
+your CLI runs. Add `-s user` to make the server available in every project instead
+of just this repo. Then `/mcp` in a session lists the `frootloopr` tools.
 
 ## Layout
 
