@@ -85,6 +85,7 @@ def _render_sub_event(console: StatusConsole, e: dict) -> None:
             console.log(f"{fg(c, '│')}  {dim(first)}")
     elif t == "spawn_end":
         console.spawn_ended(agent, e.get("usage"))
+        console.spawn_activity(agent, f"{name} {e.get('summary', '')}".strip())
         if e.get("error"):
             console.log(f"{fg(c, '╰─')} {fg(160, 'failed')} {dim(str(e['error'])[:200])}")
         else:

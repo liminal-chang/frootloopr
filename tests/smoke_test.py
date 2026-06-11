@@ -165,3 +165,22 @@ if __name__ == "__main__":
     test_runner_writes_mcp_config()
     test_workspace_sandbox()
     print("\nAll smoke tests passed.")
+def test_context_bar():
+    import re
+
+    from harness.ui import _BAR_AMBER, _BAR_GREEN, _BAR_RED, _bar_color, context_bar
+
+    strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
+    filled = lambda s: sum(ch in "█#" for ch in strip(s))
+    for pct in (0, 50, 100):
+        assert len(strip(context_bar(pct))) == 6, pct
+    assert filled(context_bar(0)) == 0
+    assert filled(context_bar(50)) == 3
+    assert filled(context_bar(100)) == 6
+    assert _bar_color(0) == _BAR_GREEN and _bar_color(49) == _BAR_GREEN
+    assert _bar_color(50) == _BAR_AMBER and _bar_color(79) == _BAR_AMBER
+    assert _bar_color(80) == _BAR_RED and _bar_color(100) == _BAR_RED
+    print("ok: context bar renders fixed width and picks color tier by fullness")
+
+
+    test_context_bar()

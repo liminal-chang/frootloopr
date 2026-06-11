@@ -16,20 +16,27 @@ import sys
 import time
 from pathlib import Path
 
-from .ui import Segment, context_window, fmt_tok, render_powerline, short_model
+from .ui import (
+    Segment,
+    agent_color,
+    context_bar,
+    context_window,
+    fmt_tok,
+    render_powerline,
+    short_model,
+)
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-# 256-color backgrounds per segment kind
-_BG_MODE = 25      # deep blue
-_BG_CTX = 61       # slate purple
-_BG_AGENT = 22     # dark green
-_BG_ITER = 30      # teal
-_BG_NOTES = 240    # gray
-_BG_TOK = 94       # amber
-_BG_IDLE = 238     # dark gray
-_BG_IDLE_HOT = 124 # red — long silence, look at the log
-_FG = 231          # near-white text
+# 256-color text per segment kind — distinguishable, readable on a dark bar.
+# Subagent segments use ui.agent_color() so concurrent agents stay distinct.
+_C_MODE = 39       # bright blue
+_C_CTX = 147       # lavender — lead context
+_C_ITER = 80       # teal
+_C_NOTES = 245     # gray
+_C_TOK = 215       # amber
+_C_IDLE = 244      # gray
+_C_IDLE_HOT = 203  # red — long silence, look at the log
 
 
 class StatusConsole:
@@ -72,7 +79,8 @@ class StatusConsole:
         self._last_event = time.monotonic()
 
     def spawn_started(self, agent: str, label: str) -> None:
-        self.active[agent] = {"model": label, "started": time.monotonic(), "ctx": 0}
+        self.active[agent] = {"model": label, "started": time.monotonic(), "ctx": 0,
+                              "activity": ""}
         self.touch()
 
     def spawn_model(self, agent: str, model: str) -> None:
@@ -82,6 +90,11 @@ class StatusConsole:
     def spawn_ctx(self, agent: str, tokens: int) -> None:
         if agent in self.active:
             self.active[agent]["ctx"] = tokens
+        self.touch()
+
+    def spawn_activity(self, agent: str, summary: str) -> None:
+        if agent in self.active:
+            self.active[agent]["activity"] = summary
         self.touch()
 
     def spawn_ended(self, agent: str, usage: dict | None) -> None:
@@ -112,33 +125,36 @@ class StatusConsole:
             return
         now = time.monotonic()
         # Ordered by priority — render_powerline drops from the tail when narrow.
-        segments: list[Segment] = [(f"{next(self._spin)} {self.mode}", _BG_MODE, _FG)]
+        segments: list[Segment] = [(f"{next(self._spin)} {self.mode}", _C_MODE)]
         if self.lead_ctx or self.lead_model:
             pct = self.lead_ctx / context_window(self.lead_model) * 100
             segments.append(
-                (f"lead {short_model(self.lead_model)} {fmt_tok(self.lead_ctx)} ({pct:.0f}%)",
-                 _BG_CTX, _FG)
+                (f"lead {short_model(self.lead_model)} {fmt_tok(self.lead_ctx)} {context_bar(pct)}",
+                 _C_CTX)
             )
         for agent, info in self.active.items():
             name = agent.replace("subagent-", "sub-")
-            seg = f"{name} {short_model(info['model'])} {now - info['started']:.0f}s"
+            seg = f"{name} {short_model(info['model'])}"
+            if info["activity"]:
+                seg += f" → {info['activity'][:24]}"
+            seg += f" {now - info['started']:.0f}s"
             if info["ctx"]:
                 pct = info["ctx"] / context_window(info["model"]) * 100
-                seg += f" {fmt_tok(info['ctx'])} ({pct:.0f}%)"
-            segments.append((seg, _BG_AGENT, _FG))
+                seg += f" {fmt_tok(info['ctx'])} {context_bar(pct)}"
+            segments.append((seg, agent_color(agent)))
         if self.iter_text:
-            segments.append((self.iter_text, _BG_ITER, _FG))
+            segments.append((self.iter_text, _C_ITER))
         idle = now - self._last_event
         if idle >= 5:
-            segments.append((f"idle {idle:.0f}s", _BG_IDLE_HOT if idle > 30 else _BG_IDLE, _FG))
+            segments.append((f"idle {idle:.0f}s", _C_IDLE_HOT if idle > 30 else _C_IDLE))
         if self.tokens:
-            segments.append((f"tok {fmt_tok(self.tokens)}", _BG_TOK, _FG))
+            segments.append((f"tok {fmt_tok(self.tokens)}", _C_TOK))
         try:
             notes = sum(1 for p in self.notes_dir.iterdir() if p.is_file())
         except OSError:
             notes = 0
         if notes:
-            segments.append((f"notes {notes}", _BG_NOTES, _FG))
+            segments.append((f"notes {notes}", _C_NOTES))
 
         width = shutil.get_terminal_size().columns
         line = render_powerline(segments, max_width=max(20, width - 1))

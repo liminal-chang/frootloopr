@@ -1,23 +1,20 @@
-"""Terminal styling: ANSI helpers, agent color assignment, and powerline-segment
+"""Terminal styling: ANSI helpers, agent color assignment, and status-segment
 rendering for the status bar. Zero dependencies.
 
 Color activates only on a TTY (and honors NO_COLOR); set HARNESS_FORCE_COLOR=1
-to force it. Set HARNESS_NO_POWERLINE=1 if your font lacks the powerline glyph
-() — segments fall back to plain separators.
+to force it. Sections are distinguished by text color (no backgrounds), so the
+bar stays flush with the terminal.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 ENABLED = os.environ.get("HARNESS_FORCE_COLOR") == "1" or (
     sys.stderr.isatty() and not os.environ.get("NO_COLOR")
 )
-# Chevron transitions need a powerline-patched font AND a terminal that renders
-# the glyph cleanly - opt in with HARNESS_POWERLINE=1. Default is spaced colored
-# pills, which look right in any font.
-_POWERLINE_SEP = "" if os.environ.get("HARNESS_POWERLINE") == "1" else ""
 
 
 def _sgr(code: str, text: str) -> str:
@@ -38,6 +35,31 @@ def fg(n: int, t: str) -> str:
 
 def bold_fg(n: int, t: str) -> str:
     return _sgr(f"1;38;5;{n}", t)
+
+
+# context-occupancy meter: green when low, amber mid, red near the limit
+_BAR_GREEN, _BAR_AMBER, _BAR_RED = 78, 214, 196
+
+
+def _bar_color(pct: float) -> int:
+    if pct < 50:
+        return _BAR_GREEN
+    if pct < 80:
+        return _BAR_AMBER
+    return _BAR_RED
+
+
+def context_bar(pct: float, width: int = 6) -> str:
+    """A `width`-cell occupancy meter colored by fullness. Block elements are
+    broadly-rendered, so they're the safe default; falls back to ASCII when
+    color is disabled (NO_COLOR / non-TTY). Always render it last in a segment:
+    it emits a bare fg escape and relies on render_powerline's trailing reset."""
+    pct = max(0.0, min(100.0, pct))
+    filled = round(pct / 100 * width)
+    if not ENABLED:
+        return "#" * filled + "-" * (width - filled)
+    bar = "█" * filled + "░" * (width - filled)   # █ / ░
+    return f"\x1b[38;5;{_bar_color(pct)}m{bar}"
 
 
 # Stable, distinct colors per agent so concurrent subagent lines are scannable.
@@ -79,35 +101,31 @@ def context_window(model: str | None) -> int:
     return 200_000
 
 
-# -- powerline status segments ------------------------------------------------------
+# -- status segments ----------------------------------------------------------------
 
-# segment: (text, bg_256, fg_256)
-Segment = tuple[str, int, int]
+# segment: (text, fg_256). No backgrounds — sections are told apart by text color.
+Segment = tuple[str, int]
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_SEP = " \x1b[38;5;240m·\x1b[0m " if ENABLED else "  "  # dim middot between sections
 
 
 def render_powerline(segments: list[Segment], max_width: int) -> str:
     if not segments:
         return ""
     # Drop trailing segments (lowest priority last) until the visible width fits.
+    # Strip embedded escapes (e.g. context_bar's color) so the math counts only
+    # what actually shows on screen.
     def visible(segs: list[Segment]) -> int:
-        return sum(len(t) + 3 for t, _, _ in segs)
+        return sum(len(_ANSI_RE.sub("", t)) + 3 for t, _ in segs)
 
     segs = list(segments)
     while len(segs) > 1 and visible(segs) > max_width:
         segs.pop()
 
     if not ENABLED:
-        return " | ".join(t for t, _, _ in segs)[:max_width]
+        return "  ".join(_ANSI_RE.sub("", t) for t, _ in segs)[:max_width]
 
-    parts = []
-    for i, (text, bg, fgc) in enumerate(segs):
-        parts.append(f"\x1b[48;5;{bg}m\x1b[38;5;{fgc}m {text} ")
-        if not _POWERLINE_SEP:
-            parts.append("\x1b[0m ")
-            continue
-        if i + 1 < len(segs):
-            nxt_bg = segs[i + 1][1]
-            parts.append(f"\x1b[48;5;{nxt_bg}m\x1b[38;5;{bg}m{_POWERLINE_SEP}")
-        else:
-            parts.append(f"\x1b[0m\x1b[38;5;{bg}m{_POWERLINE_SEP}\x1b[0m")
-    return "".join(parts)
+    # Each section opens its own fg color and resets at its end, so a section
+    # may embed its own escapes (e.g. context_bar) before the trailing reset.
+    return _SEP.join(f"\x1b[38;5;{c}m{t}\x1b[0m" for t, c in segs)
