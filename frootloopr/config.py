@@ -9,7 +9,7 @@ from typing import Any
 
 
 @dataclass
-class HarnessConfig:
+class FrootlooprConfig:
     model: str = "claude-opus-4-8"
     subagent_model: str | None = None  # None -> same as model
     max_tokens: int = 16000

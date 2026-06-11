@@ -1,6 +1,6 @@
 """MCP client lifecycle and tool bridging.
 
-The harness owns the MCP client and presents MCP tools as plain JSON-schema tools
+The frootloopr owns the MCP client and presents MCP tools as plain JSON-schema tools
 to whatever model is running — that's what makes MCP provider-neutral here, and it
 gives the offload interceptor a place to sit. Tool names are prefixed with the
 server name (server__tool) to avoid collisions.

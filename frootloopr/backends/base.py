@@ -1,5 +1,5 @@
 """CLI agent backends. Each backend wraps a vendor agent CLI invoked headlessly —
-the CLI brings its own agentic loop, tools, and context management; the harness
+the CLI brings its own agentic loop, tools, and context management; the frootloopr
 orchestrates at the process level. Auth is whatever the CLI is logged into
 (subscription plans), no API keys involved."""
 

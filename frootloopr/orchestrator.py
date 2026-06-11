@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Callable
 
 from .agent import Agent
-from .config import HarnessConfig
+from .config import FrootlooprConfig
 from .mcp_manager import MCPManager
 from .memory import MemoryStore
 from .offload import Offloader
@@ -24,7 +24,7 @@ from .types import AgentResult, ToolDef, Usage
 from .workspace import Workspace
 
 ORCHESTRATOR_SYSTEM = """\
-You are the lead agent (orchestrator) in a multi-agent harness.
+You are the lead agent (orchestrator) in a multi-agent orchestrator.
 
 Working style:
 - Delegate tool-heavy or exploratory work to subagents via spawn_agent; keep your \
@@ -41,7 +41,7 @@ full entries.
 """
 
 SUBAGENT_SYSTEM = """\
-You are a focused subagent in a multi-agent harness, working on one assigned task.
+You are a focused subagent in a multi-agent orchestrator, working on one assigned task.
 
 Working style:
 - Work only on the assigned task; do not expand scope.
@@ -70,7 +70,7 @@ memory (same name) rather than creating a near-duplicate.
 class Orchestrator:
     def __init__(
         self,
-        config: HarnessConfig,
+        config: FrootlooprConfig,
         mcp: MCPManager | None = None,
         stream_cb: Callable[[str], None] | None = None,
         on_event: Callable[[dict], None] | None = None,

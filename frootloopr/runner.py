@@ -1,6 +1,6 @@
 """Single-run orchestration over CLI backends.
 
-The lead agent is a headless Claude Code session that mounts the harness MCP
+The lead agent is a headless Claude Code session that mounts the frootloopr MCP
 server (spawn_* + memory tools). Subagents do tool-heavy work in their own
 contexts; only distilled summaries return — that's the anti-compaction mechanism,
 now enforced by process boundaries. Session resume keeps one lead conversation
@@ -38,9 +38,9 @@ was not verified, say so plainly.
 """
 
 LEAD_GUIDANCE = """\
-You are the lead agent (orchestrator) in a multi-agent harness.
+You are the lead agent (orchestrator) in a multi-agent orchestrator.
 - Delegate tool-heavy or exploratory subtasks via the spawn_claude / spawn_codex \
-/ spawn_gemini tools (mcp__harness__*); keep your own context lean. Do small, \
+/ spawn_gemini tools (mcp__frootloopr__*); keep your own context lean. Do small, \
 single-step lookups yourself.
 - Subagents cannot see this conversation: give them self-contained tasks that say \
 what the returned result must contain. They return distilled summaries; their \
@@ -66,7 +66,7 @@ COMMIT_GUIDANCE = """
 
 Committing your work (you have --commit; do this yourself — subagents never \
 commit):
-- Commit onto the CURRENT branch — the harness has already moved a --commit run \
+- Commit onto the CURRENT branch — the frootloopr has already moved a --commit run \
 onto a dedicated branch off main/master. Never switch to, or commit on, \
 main/master.
 - Commit in logical units, NOT one catch-all dump: when the work spans separable \
@@ -75,13 +75,13 @@ SEPARATE commit for each, in a sensible order, each message traceable to its one
 concern. A single commit is right only when the change is genuinely one cohesive unit.
 - Message: imperative subject line; a short body explaining WHY when it isn't \
 obvious. End every message with the trailer line: \
-Co-Authored-By: Claude (harness lead) <noreply@anthropic.com>
+Co-Authored-By: Claude (frootloopr lead) <noreply@anthropic.com>
 - Run the project's checks/tests before committing; don't commit a red tree — fix \
 it or report it instead.
 - Do NOT push or open PRs unless the task explicitly asks."""
 
 # Interactive-only tools that deadlock or thrash a headless run: nobody is there
-# to answer a question or approve a native plan-mode exit (the harness driver is
+# to answer a question or approve a native plan-mode exit (the frootloopr driver is
 # the gate, not the claude CLI's interactive machinery).
 HEADLESS_DISALLOWED = ["AskUserQuestion"]
 PLAN_DISALLOWED = ["AskUserQuestion", "ExitPlanMode", "EnterPlanMode"]
@@ -94,7 +94,7 @@ project as needed, then output a complete implementation plan as your final \
 message: the goal, ordered steps, files to touch, which subtasks you will \
 delegate to subagents (and which backend/model for each), and verifiable success \
 criteria. Do not implement anything yet. You are running headless: do NOT call \
-ExitPlanMode and do NOT ask the user anything — the harness handles plan \
+ExitPlanMode and do NOT ask the user anything — the frootloopr handles plan \
 approval outside this session. Just end your turn with the full plan as text."""
 
 REPLAN_PROMPT = """\
@@ -175,7 +175,7 @@ class Runner:
 
     def _write_mcp_config(self) -> None:
         pkg_root = Path(__file__).resolve().parent.parent
-        # Subagents get the third-party servers only — never the harness server,
+        # Subagents get the third-party servers only — never the frootloopr server,
         # which would let them call spawn_* and recursively spawn agent fleets.
         if self.config.extra_mcp_servers:
             self._subagent_mcp_config_path = self.run_dir / "subagent_mcp_config.json"
@@ -183,24 +183,24 @@ class Runner:
                 json.dumps({"mcpServers": self.config.extra_mcp_servers}, indent=2)
             )
         servers: dict[str, Any] = {
-            "harness": {
+            "frootloopr": {
                 "command": sys.executable,
-                "args": ["-m", "harness.mcp_server"],
+                "args": ["-m", "frootloopr.mcp_server"],
                 "env": {
                     "PYTHONPATH": str(pkg_root),
-                    "HARNESS_WORKDIR": str(self.workdir),
-                    "HARNESS_NOTES_DIR": str(self.notes_dir),
-                    "HARNESS_MEMORY_DIR": str(self.config.memory_dir.resolve()),
-                    "HARNESS_RUN_ID": self.run_id,
-                    "HARNESS_EVENTS_FILE": str(self.events_path),
-                    "HARNESS_SPAWN_TIMEOUT_S": str(self.config.spawn_timeout_s),
+                    "FROOTLOOPR_WORKDIR": str(self.workdir),
+                    "FROOTLOOPR_NOTES_DIR": str(self.notes_dir),
+                    "FROOTLOOPR_MEMORY_DIR": str(self.config.memory_dir.resolve()),
+                    "FROOTLOOPR_RUN_ID": self.run_id,
+                    "FROOTLOOPR_EVENTS_FILE": str(self.events_path),
+                    "FROOTLOOPR_SPAWN_TIMEOUT_S": str(self.config.spawn_timeout_s),
                     **(
-                        {"HARNESS_SUBAGENT_MODEL": self.config.subagent_model}
+                        {"FROOTLOOPR_SUBAGENT_MODEL": self.config.subagent_model}
                         if self.config.subagent_model
                         else {}
                     ),
                     **(
-                        {"HARNESS_SUBAGENT_MCP_CONFIG": str(self._subagent_mcp_config_path)}
+                        {"FROOTLOOPR_SUBAGENT_MCP_CONFIG": str(self._subagent_mcp_config_path)}
                         if self._subagent_mcp_config_path
                         else {}
                     ),

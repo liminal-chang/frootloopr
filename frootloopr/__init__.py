@@ -1,6 +1,6 @@
-"""Multi-agent harness.
+"""Multi-agent frootloopr.
 
-Primary path (subscription auth): CLI backends + harness MCP server + loop driver.
+Primary path (subscription auth): CLI backends + frootloopr MCP server + loop driver.
     Runner, RunConfig, run_loop, backends.*, mcp_server (stdio entry point)
 
 Library-only API path (needs an ANTHROPIC_API_KEY; kept for future use):
@@ -8,7 +8,7 @@ Library-only API path (needs an ANTHROPIC_API_KEY; kept for future use):
 """
 
 from .backends import BACKENDS, BackendError, BackendResult, ClaudeBackend, CodexBackend, GeminiBackend
-from .config import HarnessConfig, load_mcp_servers
+from .config import FrootlooprConfig, load_mcp_servers
 from .loop import LoopResult, run_loop
 from .memory import MemoryStore
 from .runner import RunConfig, Runner
@@ -21,7 +21,7 @@ __all__ = [
     "ClaudeBackend",
     "CodexBackend",
     "GeminiBackend",
-    "HarnessConfig",
+    "FrootlooprConfig",
     "LoopResult",
     "MemoryStore",
     "RunConfig",

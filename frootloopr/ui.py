@@ -1,7 +1,7 @@
 """Terminal styling: ANSI helpers, agent color assignment, and status-segment
 rendering for the status bar. Zero dependencies.
 
-Color activates only on a TTY (and honors NO_COLOR); set HARNESS_FORCE_COLOR=1
+Color activates only on a TTY (and honors NO_COLOR); set FROOTLOOPR_FORCE_COLOR=1
 to force it. Sections are distinguished by text color (no backgrounds), so the
 bar stays flush with the terminal.
 """
@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-ENABLED = os.environ.get("HARNESS_FORCE_COLOR") == "1" or (
+ENABLED = os.environ.get("FROOTLOOPR_FORCE_COLOR") == "1" or (
     sys.stderr.isatty() and not os.environ.get("NO_COLOR")
 )
 
@@ -80,7 +80,7 @@ def fmt_tok(n: int) -> str:
 
 
 def display_tool(name: str) -> str:
-    return name.removeprefix("mcp__harness__")
+    return name.removeprefix("mcp__frootloopr__")
 
 
 def short_model(name: str | None) -> str:
@@ -118,9 +118,9 @@ def _osa(s: str) -> str:
 
 
 def notify(title: str, message: str) -> None:
-    """Opt-in macOS desktop notification (set HARNESS_NOTIFY=1). Best-effort:
+    """Opt-in macOS desktop notification (set FROOTLOOPR_NOTIFY=1). Best-effort:
     never raises, never blocks the render meaningfully."""
-    if os.environ.get("HARNESS_NOTIFY") != "1":
+    if os.environ.get("FROOTLOOPR_NOTIFY") != "1":
         return
     import shutil
     import subprocess

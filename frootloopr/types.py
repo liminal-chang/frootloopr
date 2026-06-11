@@ -1,4 +1,4 @@
-"""Provider-neutral internal types. Everything inside the harness speaks these;
+"""Provider-neutral internal types. Everything inside the frootloopr speaks these;
 only provider adapters speak provider wire formats."""
 
 from __future__ import annotations

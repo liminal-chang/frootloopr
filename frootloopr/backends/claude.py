@@ -1,6 +1,6 @@
 """Claude Code backend: headless `claude -p` with stream-json output. Uses the
 logged-in Max/Pro subscription. Supports session resume (loop iterations continue
-one conversation), mounting MCP servers (the lead agent mounts the harness MCP
+one conversation), mounting MCP servers (the lead agent mounts the frootloopr MCP
 server), and live event callbacks — every NDJSON record is surfaced as it arrives
 instead of waiting for process exit."""
 

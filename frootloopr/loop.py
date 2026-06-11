@@ -56,7 +56,7 @@ async def run_loop(
             prompt = first_prompt if first_prompt is not None else runner.first_prompt(task)
             if until:
                 prompt += (
-                    f"\n\nWhen you believe you are done, the harness will verify by "
+                    f"\n\nWhen you believe you are done, the frootloopr will verify by "
                     f"running: `{until}` (success = exit 0). Make that check pass."
                 )
         else:

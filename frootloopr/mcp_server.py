@@ -1,4 +1,4 @@
-"""The harness MCP server (stdio).
+"""The frootloopr MCP server (stdio).
 
 Exposes spawn_claude / spawn_codex / spawn_gemini + persistent-memory tools.
 Mounted by the headless lead agent on every run — and mountable in an interactive
@@ -6,19 +6,19 @@ Claude Code session for hands-on orchestration (same tools, same memory).
 
 This process cannot print to the terminal (its stdout IS the MCP protocol), so
 all subagent activity — spawn start/end, each tool call, usage, models — is
-appended to the run's events.jsonl (HARNESS_EVENTS_FILE), which the harness CLI
+appended to the run's events.jsonl (FROOTLOOPR_EVENTS_FILE), which the frootloopr CLI
 tails and renders live.
 
 Launched by the agent CLI itself; run context arrives via environment variables:
-  HARNESS_WORKDIR     where spawned agents execute (the project dir)
-  HARNESS_NOTES_DIR   shared notes directory for this run (absolute)
-  HARNESS_MEMORY_DIR  persistent memory store (absolute)
-  HARNESS_RUN_ID      current run id (memory provenance)
-  HARNESS_EVENTS_FILE events.jsonl path for this run (absolute)
-  HARNESS_SUBAGENT_MODEL  default model for claude subagents (optional)
-  HARNESS_SPAWN_TIMEOUT_S per-spawn timeout (default 3600)
-  HARNESS_SUBAGENT_MCP_CONFIG  MCP config file mounted on claude subagents:
-                          third-party servers only, never the harness server
+  FROOTLOOPR_WORKDIR     where spawned agents execute (the project dir)
+  FROOTLOOPR_NOTES_DIR   shared notes directory for this run (absolute)
+  FROOTLOOPR_MEMORY_DIR  persistent memory store (absolute)
+  FROOTLOOPR_RUN_ID      current run id (memory provenance)
+  FROOTLOOPR_EVENTS_FILE events.jsonl path for this run (absolute)
+  FROOTLOOPR_SUBAGENT_MODEL  default model for claude subagents (optional)
+  FROOTLOOPR_SPAWN_TIMEOUT_S per-spawn timeout (default 3600)
+  FROOTLOOPR_SUBAGENT_MCP_CONFIG  MCP config file mounted on claude subagents:
+                          third-party servers only, never the frootloopr server
                           (optional; codex/gemini ignore it)
 """
 
@@ -36,27 +36,27 @@ from .events import EventLog, context_tokens, normalize_claude_event
 from .memory import MemoryStore
 from .runner import CODE_NORMS
 
-mcp = FastMCP("harness")
+mcp = FastMCP("frootloopr")
 
-WORKDIR = Path(os.environ.get("HARNESS_WORKDIR", ".")).resolve()
-NOTES_DIR = Path(os.environ.get("HARNESS_NOTES_DIR", str(WORKDIR / "notes"))).resolve()
-RUN_ID = os.environ.get("HARNESS_RUN_ID", "run_unknown")
-TIMEOUT_S = int(os.environ.get("HARNESS_SPAWN_TIMEOUT_S", "3600"))
-# Third-party MCP servers to mount on claude subagents (harness server excluded
+WORKDIR = Path(os.environ.get("FROOTLOOPR_WORKDIR", ".")).resolve()
+NOTES_DIR = Path(os.environ.get("FROOTLOOPR_NOTES_DIR", str(WORKDIR / "notes"))).resolve()
+RUN_ID = os.environ.get("FROOTLOOPR_RUN_ID", "run_unknown")
+TIMEOUT_S = int(os.environ.get("FROOTLOOPR_SPAWN_TIMEOUT_S", "3600"))
+# Third-party MCP servers to mount on claude subagents (frootloopr server excluded
 # upstream, so subagents cannot spawn recursively). Codex/gemini ignore it.
-SUBAGENT_MCP_CONFIG = os.environ.get("HARNESS_SUBAGENT_MCP_CONFIG")
+SUBAGENT_MCP_CONFIG = os.environ.get("FROOTLOOPR_SUBAGENT_MCP_CONFIG")
 
 _memory = MemoryStore(
-    Path(os.environ.get("HARNESS_MEMORY_DIR", str(WORKDIR / "memory"))).resolve(),
+    Path(os.environ.get("FROOTLOOPR_MEMORY_DIR", str(WORKDIR / "memory"))).resolve(),
     RUN_ID,
 )
 _events = EventLog(
-    Path(os.environ.get("HARNESS_EVENTS_FILE", str(WORKDIR / "events.jsonl"))).resolve()
+    Path(os.environ.get("FROOTLOOPR_EVENTS_FILE", str(WORKDIR / "events.jsonl"))).resolve()
 )
 _spawn_seq = count(1)
 
 SUBAGENT_GUIDANCE = (
-    "You are a focused subagent in a multi-agent harness, working on one assigned "
+    "You are a focused subagent in a multi-agent orchestrator, working on one assigned "
     "task. Work only on that task; do not expand scope. Write durable findings that "
     "other agents may need to {notes_dir}/<topic>.md. You are running HEADLESS — "
     "never ask the user questions; make reasonable assumptions and note them. Your "
@@ -139,7 +139,7 @@ async def spawn_claude(task: str, context_hint: str = "", model: str = "") -> st
     notes files from earlier subagents. model picks the subagent's model: "haiku"
     for mechanical scans and simple lookups, "sonnet" for routine multi-step work,
     "opus" (or leave empty for the default) for hard reasoning."""
-    chosen = model or os.environ.get("HARNESS_SUBAGENT_MODEL") or None
+    chosen = model or os.environ.get("FROOTLOOPR_SUBAGENT_MODEL") or None
     return await _spawn(ClaudeBackend(model=chosen), task, context_hint)
 
 

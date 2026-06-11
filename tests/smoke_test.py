@@ -9,9 +9,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.memory import MemoryStore
-from harness.offload import Offloader
-from harness.workspace import Workspace
+from frootloopr.memory import MemoryStore
+from frootloopr.offload import Offloader
+from frootloopr.workspace import Workspace
 
 
 def test_offload_large_result():
@@ -67,7 +67,7 @@ def test_memory_write_update_index():
 
 
 def test_claude_backend_cmd():
-    from harness.backends import ClaudeBackend
+    from frootloopr.backends import ClaudeBackend
 
     b = ClaudeBackend(model="haiku")
     cmd = b.build_cmd("do it", system_append="sys", mcp_config=Path("/tmp/m.json"), resume="sess-1")
@@ -89,13 +89,13 @@ def test_claude_backend_cmd():
 
 def test_event_normalization_and_log():
     import json
-    from harness.events import EventLog, context_tokens, normalize_claude_event, read_events
+    from frootloopr.events import EventLog, context_tokens, normalize_claude_event, read_events
 
     init = {"type": "system", "subtype": "init", "model": "claude-opus-4-8", "session_id": "s1"}
     assistant = {"type": "assistant", "message": {"content": [
         {"type": "text", "text": "Working on it."},
         {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls -la /tmp"}},
-        {"type": "tool_use", "id": "t2", "name": "mcp__harness__spawn_claude",
+        {"type": "tool_use", "id": "t2", "name": "mcp__frootloopr__spawn_claude",
          "input": {"task": "survey files", "model": "haiku"}},
     ], "usage": {"input_tokens": 100, "cache_read_input_tokens": 5000,
                  "cache_creation_input_tokens": 200, "output_tokens": 50}}}
@@ -122,8 +122,8 @@ def test_event_normalization_and_log():
 
 
 def test_rate_limit_and_model_usage():
-    from harness.cli import _fmt_reset, _merge_model_usage
-    from harness.events import normalize_claude_event
+    from frootloopr.cli import _fmt_reset, _merge_model_usage
+    from frootloopr.events import normalize_claude_event
 
     rl = {"type": "rate_limit_event",
           "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 123}}
@@ -149,7 +149,7 @@ def test_rate_limit_and_model_usage():
 
 def test_runner_writes_mcp_config():
     import json
-    from harness.runner import RunConfig, Runner
+    from frootloopr.runner import RunConfig, Runner
 
     with tempfile.TemporaryDirectory() as d:
         base = Path(d)
@@ -162,27 +162,27 @@ def test_runner_writes_mcp_config():
         r = Runner(cfg)
         data = json.loads((r.run_dir / "mcp_config.json").read_text())
         servers = data["mcpServers"]
-        assert "harness" in servers and "fs" in servers
-        env = servers["harness"]["env"]
-        assert env["HARNESS_WORKDIR"] == str(base.resolve())
-        assert env["HARNESS_RUN_ID"] == r.run_id
-        assert env["HARNESS_EVENTS_FILE"] == str(r.events_path)
+        assert "frootloopr" in servers and "fs" in servers
+        env = servers["frootloopr"]["env"]
+        assert env["FROOTLOOPR_WORKDIR"] == str(base.resolve())
+        assert env["FROOTLOOPR_RUN_ID"] == r.run_id
+        assert env["FROOTLOOPR_EVENTS_FILE"] == str(r.events_path)
         assert r.notes_dir.is_dir()
         prompt = r.first_prompt("do the thing")
         assert "do the thing" in prompt and str(r.notes_dir) in prompt
 
-        # subagent config: third-party servers only — no harness key (no spawn_* recursion)
+        # subagent config: third-party servers only — no frootloopr key (no spawn_* recursion)
         sub_path = r.run_dir / "subagent_mcp_config.json"
         sub_servers = json.loads(sub_path.read_text())["mcpServers"]
-        assert "fs" in sub_servers and "harness" not in sub_servers
-        assert env["HARNESS_SUBAGENT_MCP_CONFIG"] == str(sub_path)
+        assert "fs" in sub_servers and "frootloopr" not in sub_servers
+        assert env["FROOTLOOPR_SUBAGENT_MCP_CONFIG"] == str(sub_path)
 
         # no extra servers -> no subagent config file, no env var
         r2 = Runner(RunConfig(workdir=base, runs_dir=base / "runs2", memory_dir=base / "memory"))
         assert not (r2.run_dir / "subagent_mcp_config.json").exists()
-        env2 = json.loads((r2.run_dir / "mcp_config.json").read_text())["mcpServers"]["harness"]["env"]
-        assert "HARNESS_SUBAGENT_MCP_CONFIG" not in env2
-        print("ok: runner writes merged MCP config, harness-free subagent config, and the first prompt")
+        env2 = json.loads((r2.run_dir / "mcp_config.json").read_text())["mcpServers"]["frootloopr"]["env"]
+        assert "FROOTLOOPR_SUBAGENT_MCP_CONFIG" not in env2
+        print("ok: runner writes merged MCP config, frootloopr-free subagent config, and the first prompt")
 
 
 def test_watch_render_and_resolve():
@@ -190,10 +190,10 @@ def test_watch_render_and_resolve():
     import io
     import json
 
-    from harness.cli import LeadRenderer, _render_event, _resolve_run_dir
-    from harness.events import EventLog, read_events
-    from harness.status import StatusConsole
-    from harness.ui import bell
+    from frootloopr.cli import LeadRenderer, _render_event, _resolve_run_dir
+    from frootloopr.events import EventLog, read_events
+    from frootloopr.status import StatusConsole
+    from frootloopr.ui import bell
 
     bell(True)  # non-TTY: must be a harmless no-op, never raises
 
@@ -248,7 +248,7 @@ def test_watch_render_and_resolve():
 def test_default_mcp():
     import json
 
-    from harness.cli import _PKG_ROOT, _default_mcp_servers
+    from frootloopr.cli import _PKG_ROOT, _default_mcp_servers
 
     p = _PKG_ROOT / "mcp" / "default.json"
     assert p.exists(), "mcp/default.json should ship so Context7 is on by default"
@@ -259,8 +259,8 @@ def test_default_mcp():
 
 
 def test_run_summary_and_naming():
-    from harness.cli import _append_index, _resolve_run_dir, _summary_md
-    from harness.runner import make_run_id
+    from frootloopr.cli import _append_index, _resolve_run_dir, _summary_md
+    from frootloopr.runner import make_run_id
 
     # self-identifying run id: timestamp leads, project + task slug follow
     rid = make_run_id(Path("/x/myapp"), "Fix the auth bug now please")
@@ -294,7 +294,7 @@ def test_run_summary_and_naming():
         assert got is not None and got.name == "run_20260101_010101_proj_do-thing"
     # _git_commits_since captures committed work that `git status` no longer shows
     import subprocess
-    from harness.cli import _git_commits_since, _git_head
+    from frootloopr.cli import _git_commits_since, _git_head
     with tempfile.TemporaryDirectory() as d:
         wd = Path(d)
         g = lambda *a: subprocess.run(["git", "-C", str(wd), *a], capture_output=True, text=True, check=True)
@@ -314,8 +314,8 @@ def test_ensure_commit_branch():
     import io
     import subprocess
 
-    from harness.cli import _ensure_commit_branch
-    from harness.status import StatusConsole
+    from frootloopr.cli import _ensure_commit_branch
+    from frootloopr.status import StatusConsole
 
     with tempfile.TemporaryDirectory() as d:
         wd = Path(d)
@@ -331,7 +331,7 @@ def test_ensure_commit_branch():
         (wd / "a").write_text("a"); g("add", "-A"); g("commit", "-m", "init")
         with contextlib.redirect_stderr(io.StringIO()):
             _ensure_commit_branch(wd, "run_20260101_000000_proj_task", console)
-        assert cur() == "harness/20260101_000000_proj_task", cur()  # branched off main
+        assert cur() == "frootloopr/20260101_000000_proj_task", cur()  # branched off main
 
         g("switch", "-c", "feature/x")  # already on a feature branch
         with contextlib.redirect_stderr(io.StringIO()):
@@ -341,7 +341,7 @@ def test_ensure_commit_branch():
 
 
 def test_commit_guidance():
-    from harness.runner import COMMIT_GUIDANCE, LEAD_GUIDANCE, RunConfig, Runner
+    from frootloopr.runner import COMMIT_GUIDANCE, LEAD_GUIDANCE, RunConfig, Runner
 
     with tempfile.TemporaryDirectory() as d:
         base = Path(d)
@@ -359,7 +359,7 @@ def test_commit_guidance():
 def test_context_bar():
     import re
 
-    from harness.ui import _BAR_AMBER, _BAR_GREEN, _BAR_RED, _bar_color, context_bar
+    from frootloopr.ui import _BAR_AMBER, _BAR_GREEN, _BAR_RED, _bar_color, context_bar
 
     strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
     filled = lambda s: sum(ch in "█#" for ch in strip(s))

@@ -1,7 +1,7 @@
 """CLI entry point.
 
-  python -m harness run  "task" [--workdir DIR] [--mcp-config extra.json] ...
-  python -m harness loop "task" --until "pytest -q" --max-iterations 5 ...
+  python -m frootloopr run  "task" [--workdir DIR] [--mcp-config extra.json] ...
+  python -m frootloopr loop "task" --until "pytest -q" --max-iterations 5 ...
 
 Live activity — lead-agent text, tool calls, subagent spawns/tools (tailed from
 the run's events.jsonl), models, per-turn context occupancy — renders to stderr
@@ -49,7 +49,7 @@ class LeadRenderer:
     def __init__(self, console: StatusConsole, events: EventLog | None = None):
         self.console = console
         # Mirror lead milestones into events.jsonl (flagged mirror=True) so
-        # `harness watch` can replay a faithful run; the live tail skips them.
+        # `frootloopr watch` can replay a faithful run; the live tail skips them.
         self.events = events
         self.model: str | None = None
         self.context: int = 0
@@ -129,7 +129,7 @@ def _render_sub_event(console: StatusConsole, e: dict) -> None:
 
 
 def _render_event(console: StatusConsole, e: dict, bell_enabled: bool = True) -> None:
-    """Replay one events.jsonl record for `harness watch` — the unified path that
+    """Replay one events.jsonl record for `frootloopr watch` — the unified path that
     renders lead, subagent, AND loop/run milestones. The live run renders the
     non-subagent kinds in-process, so they reach the file only as mirror=True
     records (skipped by the live tail); here we render them too."""
@@ -175,7 +175,7 @@ def _render_event(console: StatusConsole, e: dict, bell_enabled: bool = True) ->
         status = e.get("status", "")
         console.log(f"\n{fg(34 if e.get('ok') else 160, '●')} {bold('run ' + status)}")
         bell(bell_enabled)
-        notify("harness", f"run {status}: {e.get('run_id', '')}")
+        notify("frootloopr", f"run {status}: {e.get('run_id', '')}")
     console.touch()
 
 
@@ -349,7 +349,7 @@ def _git_commits_since(workdir: Path, base: str | None) -> tuple[str | None, lis
 
 def _ensure_commit_branch(workdir: Path, run_id: str, console: StatusConsole) -> None:
     """For --commit runs: if the repo is on its default branch, switch to a fresh
-    harness/<run_id> branch BEFORE the run — so it physically cannot commit to
+    frootloopr/<run_id> branch BEFORE the run — so it physically cannot commit to
     main/master, regardless of whether the lead remembers to branch. Deterministic
     enforcement beats prose for a hard rule. No-op if already on a feature branch."""
     if not (workdir / ".git").exists():
@@ -359,7 +359,7 @@ def _ensure_commit_branch(workdir: Path, run_id: str, console: StatusConsole) ->
         return  # already on a feature branch, or detached/unborn — leave it
     if _git_head(workdir) is None:
         return  # no commits yet to branch from; the lead will init + branch itself
-    new = "harness/" + run_id.removeprefix("run_")
+    new = "frootloopr/" + run_id.removeprefix("run_")
     rc, _out = _git(workdir, "switch", "-c", new)
     if rc != 0:
         rc, _out = _git(workdir, "checkout", "-b", new)  # older git without `switch`
@@ -428,7 +428,7 @@ def _append_index(runs_dir: Path, *, run_id: str, project: str, task: str,
     idx = runs_dir / "INDEX.md"
     try:
         if not idx.exists():
-            idx.write_text("# Harness runs\n\n| date | project | task | outcome | run |\n"
+            idx.write_text("# Frootloopr runs\n\n| date | project | task | outcome | run |\n"
                            "|---|---|---|---|---|\n")
         task1 = " ".join(task.split())[:60].replace("|", "/")
         with idx.open("a") as f:
@@ -501,7 +501,7 @@ def _make_loop_printer(console: StatusConsole, max_iterations: int, events: Even
             console.log(f"{fg(178, '⚠')} backend error, retrying in {event['wait_s']}s: {dim(event['error'])}")
         elif t == "reflection_start":
             console.log(f"{fg(176, '⏺')} {bold('memory')} {dim('end-of-run reflection')}")
-        # Mirror for `harness watch` (skipped by the live tail via mirror=True).
+        # Mirror for `frootloopr watch` (skipped by the live tail via mirror=True).
         if events:
             events.write("loop", t, mirror=True, max_iterations=max_iterations,
                          **{k: v for k, v in event.items() if k != "type"})
@@ -590,7 +590,7 @@ async def _execute(args: argparse.Namespace) -> int:
     console = StatusConsole(runner.notes_dir, enabled=not args.no_status)
     console.mode = "LOOP" if args.command == "loop" else "RUN"
     # The same events.jsonl the MCP server appends subagent activity to; the lead
-    # mirrors its own milestones here too so `harness watch` sees the whole run.
+    # mirrors its own milestones here too so `frootloopr watch` sees the whole run.
     events_log = EventLog(runner.events_path)
     lead = LeadRenderer(console, events=events_log)
     runner.on_lead_event = lead
@@ -729,7 +729,7 @@ async def _watch(args: argparse.Namespace) -> int:
     return 0
 
 
-# Artifacts anchor to the harness install, not the launch cwd — so the CLI works
+# Artifacts anchor to the frootloopr install, not the launch cwd — so the CLI works
 # from any directory and memory stays one store instead of one per project.
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 
@@ -761,22 +761,22 @@ targeting a project, directory, or file:
   --workdir picks the project (agents run there; default: your current dir).
   Name files/dirs in the task text, relative to that workdir.
 
-  harness run "audit the error handling in this repo"                      # project = current dir
-  harness run "fix the race condition in src/auth.py" --workdir ~/code/api # one file, by path
-  harness run "add docstrings to everything under harness/backends/" \\
-      --workdir ~/dev/harness                                              # one directory
-  harness run "create dashboard.html showing the data in stats.csv" \\
+  frootloopr run "audit the error handling in this repo"                      # project = current dir
+  frootloopr run "fix the race condition in src/auth.py" --workdir ~/code/api # one file, by path
+  frootloopr run "add docstrings to everything under frootloopr/backends/" \\
+      --workdir ~/dev/frootloopr                                              # one directory
+  frootloopr run "create dashboard.html showing the data in stats.csv" \\
       --workdir ~/Desktop/new-project                                      # fresh/empty dir works too
 
 more examples:
-  harness run  "refactor the auth module" --plan-first
-  harness run  "deep refactor of the parser" --model opus --subagent-model haiku
-  harness loop "fix the failing tests" --until "pytest -q" --max-iterations 5 --workdir ~/code/proj
-  harness run  "pull the spec from Figma and draft the component" --mcp-config figma.json
+  frootloopr run  "refactor the auth module" --plan-first
+  frootloopr run  "deep refactor of the parser" --model opus --subagent-model haiku
+  frootloopr loop "fix the failing tests" --until "pytest -q" --max-iterations 5 --workdir ~/code/proj
+  frootloopr run  "pull the spec from Figma and draft the component" --mcp-config figma.json
 """
 
 _TOP_EPILOG = """\
-common flags (both subcommands — full list: harness run --help):
+common flags (both subcommands — full list: frootloopr run --help):
   --workdir DIR           where agents execute (default: current directory)
   --model NAME            lead agent's model, e.g. opus | sonnet (default: your claude CLI default)
   --subagent-model NAME   default model for claude subagents, e.g. haiku
@@ -799,7 +799,7 @@ models:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="harness",
+        prog="frootloopr",
         description="Multi-agent CLI orchestrator",
         epilog=_TOP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -825,9 +825,9 @@ def main() -> int:
     p_watch = sub.add_parser(
         "watch",
         help="Live-render a run in a second terminal (zero token cost — just reads events.jsonl)",
-        epilog="  harness watch                 # follow the newest run\n"
-               "  harness watch run_20260611_134642\n"
-               "  harness watch --once          # snapshot current state and exit",
+        epilog="  frootloopr watch                 # follow the newest run\n"
+               "  frootloopr watch run_20260611_134642\n"
+               "  frootloopr watch --once          # snapshot current state and exit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_watch.add_argument("run_id", nargs="?", help="Run id to watch (default: the newest run)")

@@ -2,7 +2,7 @@
 
 The loop is manual (not an SDK tool runner) because the offload interceptor must
 sit between tool dispatch and the transcript — that hook is the point of the
-harness. Agents keep their transcript across run() calls, so the orchestrator can
+frootloopr. Agents keep their transcript across run() calls, so the orchestrator can
 continue a conversation (e.g. the end-of-run reflection turn).
 """
 

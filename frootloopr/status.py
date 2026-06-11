@@ -1,4 +1,4 @@
-"""Sticky status line for the harness CLI — powerline-style colored segments
+"""Sticky status line for the frootloopr CLI — powerline-style colored segments
 pinned to the bottom of the terminal, scrolling log above:
 
   ⠸ RUN  ctx 24k  subagent-1 haiku 38s  iter 2/5  ✎ 3  Σ 41k  idle 12s
