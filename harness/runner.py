@@ -51,6 +51,9 @@ hard reasoning. Use spawn_codex / spawn_gemini for independent second opinions, 
 cross-model review, or to spread usage across providers.
 - A persistent memory index may appear in your first message. Treat memories as \
 hints — verify before relying on them; memory_read for full entries.
+- If third-party MCP tools are mounted (e.g. Context7 for live library docs, \
+Playwright for browser automation), prefer them over recalling library/framework \
+APIs from memory; claude subagents have the same tools.
 - You are running HEADLESS — there is no user to answer questions mid-run. Never \
 wait for approval; make reasonable assumptions and note them in your final summary.
 """ + CODE_NORMS
@@ -124,10 +127,18 @@ class Runner:
         self.on_lead_event = on_lead_event  # receives raw stream-json records
         self.lead_turns: list[BackendResult] = []
         self._mcp_config_path = self.run_dir / "mcp_config.json"
+        self._subagent_mcp_config_path: Path | None = None
         self._write_mcp_config()
 
     def _write_mcp_config(self) -> None:
         pkg_root = Path(__file__).resolve().parent.parent
+        # Subagents get the third-party servers only — never the harness server,
+        # which would let them call spawn_* and recursively spawn agent fleets.
+        if self.config.extra_mcp_servers:
+            self._subagent_mcp_config_path = self.run_dir / "subagent_mcp_config.json"
+            self._subagent_mcp_config_path.write_text(
+                json.dumps({"mcpServers": self.config.extra_mcp_servers}, indent=2)
+            )
         servers: dict[str, Any] = {
             "harness": {
                 "command": sys.executable,
@@ -143,6 +154,11 @@ class Runner:
                     **(
                         {"HARNESS_SUBAGENT_MODEL": self.config.subagent_model}
                         if self.config.subagent_model
+                        else {}
+                    ),
+                    **(
+                        {"HARNESS_SUBAGENT_MCP_CONFIG": str(self._subagent_mcp_config_path)}
+                        if self._subagent_mcp_config_path
                         else {}
                     ),
                 },

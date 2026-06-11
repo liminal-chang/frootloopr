@@ -339,7 +339,21 @@ async def _plan_phase(runner: Runner, console: StatusConsole, task: str) -> bool
 # -- commands -------------------------------------------------------------------------
 
 
+def _default_mcp_servers(no_default: bool) -> dict:
+    """Servers mounted on every run unless --no-default-mcp. Ships Context7 (live
+    library docs, read-only) so agents stop recalling stale APIs; edit
+    mcp/default.json to change the set. Fails open: a missing file means none."""
+    if no_default:
+        return {}
+    path = _PKG_ROOT / "mcp" / "default.json"
+    return load_mcp_servers(path) if path.exists() else {}
+
+
 def _build_config(args: argparse.Namespace) -> RunConfig:
+    # Defaults first, then explicit --mcp-config wins on any name collision.
+    servers = _default_mcp_servers(args.no_default_mcp)
+    if args.mcp_config:
+        servers.update(load_mcp_servers(args.mcp_config))
     return RunConfig(
         workdir=Path(args.workdir),
         runs_dir=Path(args.runs_dir),
@@ -348,7 +362,7 @@ def _build_config(args: argparse.Namespace) -> RunConfig:
         subagent_model=args.subagent_model,
         spawn_timeout_s=args.spawn_timeout,
         reflect=not args.no_reflect,
-        extra_mcp_servers=load_mcp_servers(args.mcp_config) if args.mcp_config else {},
+        extra_mcp_servers=servers,
     )
 
 
@@ -430,6 +444,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--subagent-model", default=None, help="Default model for claude subagents")
     p.add_argument("--spawn-timeout", type=int, default=3600, help="Per-subagent timeout (s)")
     p.add_argument("--mcp-config", help="Extra MCP servers JSON to mount on the lead agent")
+    p.add_argument("--no-default-mcp", action="store_true",
+                   help="Skip auto-mounting mcp/default.json (Context7) for this run")
     p.add_argument("--no-reflect", action="store_true", help="Skip the end-of-run memory reflection step")
     p.add_argument("--no-status", action="store_true", help="Disable the sticky status line")
     p.add_argument("--plan-first", action="store_true",

@@ -17,6 +17,9 @@ Launched by the agent CLI itself; run context arrives via environment variables:
   HARNESS_EVENTS_FILE events.jsonl path for this run (absolute)
   HARNESS_SUBAGENT_MODEL  default model for claude subagents (optional)
   HARNESS_SPAWN_TIMEOUT_S per-spawn timeout (default 3600)
+  HARNESS_SUBAGENT_MCP_CONFIG  MCP config file mounted on claude subagents:
+                          third-party servers only, never the harness server
+                          (optional; codex/gemini ignore it)
 """
 
 from __future__ import annotations
@@ -39,6 +42,9 @@ WORKDIR = Path(os.environ.get("HARNESS_WORKDIR", ".")).resolve()
 NOTES_DIR = Path(os.environ.get("HARNESS_NOTES_DIR", str(WORKDIR / "notes"))).resolve()
 RUN_ID = os.environ.get("HARNESS_RUN_ID", "run_unknown")
 TIMEOUT_S = int(os.environ.get("HARNESS_SPAWN_TIMEOUT_S", "3600"))
+# Third-party MCP servers to mount on claude subagents (harness server excluded
+# upstream, so subagents cannot spawn recursively). Codex/gemini ignore it.
+SUBAGENT_MCP_CONFIG = os.environ.get("HARNESS_SUBAGENT_MCP_CONFIG")
 
 _memory = MemoryStore(
     Path(os.environ.get("HARNESS_MEMORY_DIR", str(WORKDIR / "memory"))).resolve(),
@@ -56,7 +62,9 @@ SUBAGENT_GUIDANCE = (
     "never ask the user questions; make reasonable assumptions and note them. Your "
     "final message is returned verbatim to the orchestrator and your context is "
     "then discarded: make it a complete, distilled result (facts, paths, numbers, "
-    "conclusions) — not a narrative of what you did."
+    "conclusions) — not a narrative of what you did. If third-party MCP tools are "
+    "available (e.g. Context7 for live library docs), prefer them over recalling "
+    "library/framework APIs from memory."
 ) + CODE_NORMS
 
 
@@ -99,6 +107,7 @@ async def _spawn(backend, task: str, context_hint: str) -> str:
             _subagent_prompt(task, context_hint),
             cwd=WORKDIR,
             system_append=guidance,
+            mcp_config=Path(SUBAGENT_MCP_CONFIG) if SUBAGENT_MCP_CONFIG else None,
             timeout_s=TIMEOUT_S,
             on_event=on_raw,
             disallowed_tools=["AskUserQuestion"],  # headless: nobody to answer
