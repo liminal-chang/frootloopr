@@ -266,16 +266,18 @@ def test_run_summary_and_naming():
     rid = make_run_id(Path("/x/myapp"), "Fix the auth bug now please")
     assert rid.startswith("run_") and "myapp" in rid and "fix-the-auth-bug" in rid
 
-    # summary markdown carries the what/why/how sections
+    # summary markdown carries the what/why/how sections, incl. commits made
     md = _summary_md({
         "run_id": rid, "project": "myapp", "workdir": "/x/myapp", "date": "2026-06-11 14:03",
         "mode": "loop · plan-first", "outcome": "done (2 iter)", "models": ["claude-fable-5"],
         "cost": 1.23, "task": "Fix the auth bug", "plan": "1. do x", "changed": [" M src/auth.py"],
+        "branch": "fix-auth", "commits": ["abc123 Fix the auth bug", "def456 Add a test"],
         "subagents": ["subagent-1 (haiku)"], "final_text": "Fixed it.", "notes": ["plan.md"],
     })
-    for section in (f"# {rid}", "## Task", "## Plan", "## What changed", "## Summary"):
+    for section in (f"# {rid}", "## Task", "## Plan", "## Commits", "## What changed", "## Summary"):
         assert section in md, section
     assert "$1.23" in md and "src/auth.py" in md and "myapp" in md
+    assert "fix-auth" in md and "abc123 Fix the auth bug" in md
 
     with tempfile.TemporaryDirectory() as d:
         runs = Path(d)
@@ -290,7 +292,21 @@ def test_run_summary_and_naming():
         (runs / "run_20260101_010101_proj_do-thing").mkdir()
         got = _resolve_run_dir(runs, "run_20260101_010101")
         assert got is not None and got.name == "run_20260101_010101_proj_do-thing"
-    print("ok: self-identifying run id, summary.md sections, INDEX append, prefix run resolution")
+    # _git_commits_since captures committed work that `git status` no longer shows
+    import subprocess
+    from harness.cli import _git_commits_since, _git_head
+    with tempfile.TemporaryDirectory() as d:
+        wd = Path(d)
+        g = lambda *a: subprocess.run(["git", "-C", str(wd), *a], capture_output=True, text=True, check=True)
+        g("init", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (wd / "a.txt").write_text("a"); g("add", "-A"); g("commit", "-m", "init")
+        base = _git_head(wd)
+        (wd / "b.txt").write_text("b"); g("add", "-A"); g("commit", "-m", "add b")
+        branch, commits = _git_commits_since(wd, base)
+        assert branch == "main" and len(commits) == 1 and "add b" in commits[0]
+        _, none = _git_commits_since(wd, _git_head(wd))  # no commits since current head
+        assert none == []
+    print("ok: self-identifying run id, summary sections + commits, INDEX append, prefix resolution")
 
 
 def test_commit_guidance():

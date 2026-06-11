@@ -322,6 +322,31 @@ def _git_status_set(workdir: Path) -> set[str] | None:
     return set(proc.stdout.splitlines())
 
 
+def _git(workdir: Path, *args: str) -> tuple[int, str]:
+    proc = subprocess.run(["git", *args], cwd=str(workdir), capture_output=True, text=True)
+    return proc.returncode, proc.stdout.strip()
+
+
+def _git_head(workdir: Path) -> str | None:
+    """Current HEAD sha, or None if not a repo / no commits yet."""
+    if not (workdir / ".git").exists():
+        return None
+    rc, out = _git(workdir, "rev-parse", "HEAD")
+    return out if rc == 0 else None
+
+
+def _git_commits_since(workdir: Path, base: str | None) -> tuple[str | None, list[str]]:
+    """(branch, ["<sha> <subject>", ...]) for commits the run made since `base` HEAD.
+    Captures committed work that `git status` no longer shows — the whole point of
+    the summary on a --commit run."""
+    if base is None or not (workdir / ".git").exists():
+        return None, []
+    _, branch = _git(workdir, "rev-parse", "--abbrev-ref", "HEAD")
+    rc, out = _git(workdir, "log", f"{base}..HEAD", "--format=%h %s")
+    commits = out.splitlines() if rc == 0 and out else []
+    return (branch or None), commits
+
+
 def _report_changes(workdir: Path, baseline: set[str] | None) -> None:
     after = _git_status_set(workdir)
     if after is None or baseline is None:
@@ -360,9 +385,12 @@ def _summary_md(m: dict) -> str:
     L += ["", "## Task", "", m["task"].strip() or "_(none)_"]
     if m.get("plan"):
         L += ["", "## Plan", "", m["plan"].strip()]
-    L += ["", "## What changed", ""]
+    if m.get("commits"):
+        L += ["", "## Commits", "", f"On branch `{m.get('branch') or '?'}`:", "",
+              *(f"- `{c}`" for c in m["commits"])]
+    L += ["", "## What changed (uncommitted)", ""]
     L += (["```", *m["changed"], "```"] if m.get("changed")
-          else ["_No new file changes since run start._"])
+          else ["_Nothing uncommitted in the working tree._"])
     if m.get("subagents"):
         L += ["", "## Subagents", "", *(f"- {s}" for s in m["subagents"])]
     L += ["", "## Summary", "", m.get("final_text", "").strip() or "_(none)_"]
@@ -390,7 +418,8 @@ def _append_index(runs_dir: Path, *, run_id: str, project: str, task: str,
 
 
 def _write_summary(runner: Runner, args: argparse.Namespace, final_text: str,
-                   exit_code: int, iterations: int, baseline: set[str] | None) -> None:
+                   exit_code: int, iterations: int, baseline: set[str] | None,
+                   baseline_head: str | None) -> None:
     """Persist a per-run summary.md (what/why/how) and append to runs/INDEX.md."""
     models, cost, subagents = [], 0.0, []
     try:  # models + cost + subagents from the usage.json _report_usage just wrote
@@ -406,6 +435,7 @@ def _write_summary(runner: Runner, args: argparse.Namespace, final_text: str,
     after = _git_status_set(runner.workdir)
     if after is not None and baseline is not None:
         changed = sorted(after - baseline)
+    branch, commits = _git_commits_since(runner.workdir, baseline_head)
 
     plan = runner.plan_path.read_text() if runner.plan_path.exists() else ""
     try:
@@ -422,7 +452,7 @@ def _write_summary(runner: Runner, args: argparse.Namespace, final_text: str,
         "run_id": runner.run_id, "project": runner.workdir.name, "workdir": str(runner.workdir),
         "date": date, "mode": mode, "outcome": outcome, "models": models, "cost": cost,
         "task": args.task, "plan": plan, "changed": changed, "subagents": subagents,
-        "final_text": final_text, "notes": notes,
+        "branch": branch, "commits": commits, "final_text": final_text, "notes": notes,
     })
     try:
         (runner.run_dir / "summary.md").write_text(md)
@@ -546,6 +576,7 @@ async def _execute(args: argparse.Namespace) -> int:
     runner.on_lead_event = lead
     console.log(f"{bold(runner.run_id)}  {dim('notes: ' + str(runner.notes_dir))}")
     baseline = _git_status_set(runner.workdir)
+    baseline_head = _git_head(runner.workdir)  # to report commits the run makes (--commit)
     events_log.write("run", "run_start", mirror=True, run_id=runner.run_id, mode=console.mode)
 
     stop = asyncio.Event()
@@ -599,7 +630,7 @@ async def _execute(args: argparse.Namespace) -> int:
 
     _report_usage(runner, lead)
     _report_changes(runner.workdir, baseline)
-    _write_summary(runner, args, final_text, exit_code, iterations, baseline)
+    _write_summary(runner, args, final_text, exit_code, iterations, baseline, baseline_head)
     # stdout carries the final answer for pipes/automation. When both streams are
     # a TTY, the answer was already streamed live above — reprinting would just
     # duplicate it on the same screen.
