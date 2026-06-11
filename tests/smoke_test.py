@@ -258,6 +258,41 @@ def test_default_mcp():
     print("ok: Context7 ships as a default MCP server; --no-default-mcp opts out")
 
 
+def test_run_summary_and_naming():
+    from harness.cli import _append_index, _resolve_run_dir, _summary_md
+    from harness.runner import make_run_id
+
+    # self-identifying run id: timestamp leads, project + task slug follow
+    rid = make_run_id(Path("/x/myapp"), "Fix the auth bug now please")
+    assert rid.startswith("run_") and "myapp" in rid and "fix-the-auth-bug" in rid
+
+    # summary markdown carries the what/why/how sections
+    md = _summary_md({
+        "run_id": rid, "project": "myapp", "workdir": "/x/myapp", "date": "2026-06-11 14:03",
+        "mode": "loop · plan-first", "outcome": "done (2 iter)", "models": ["claude-fable-5"],
+        "cost": 1.23, "task": "Fix the auth bug", "plan": "1. do x", "changed": [" M src/auth.py"],
+        "subagents": ["subagent-1 (haiku)"], "final_text": "Fixed it.", "notes": ["plan.md"],
+    })
+    for section in (f"# {rid}", "## Task", "## Plan", "## What changed", "## Summary"):
+        assert section in md, section
+    assert "$1.23" in md and "src/auth.py" in md and "myapp" in md
+
+    with tempfile.TemporaryDirectory() as d:
+        runs = Path(d)
+        _append_index(runs, run_id=rid, project="myapp", task="Fix the auth bug",
+                      outcome="done", date="2026-06-11 14:03")
+        _append_index(runs, run_id="run_x", project="other", task="t",
+                      outcome="not done", date="2026-06-11 15:00")
+        idx = (runs / "INDEX.md").read_text()
+        assert idx.count("| 2026-06-11") == 2 and "myapp" in idx and "other" in idx
+
+        # prefix resolution: a bare timestamp finds the slugged dir
+        (runs / "run_20260101_010101_proj_do-thing").mkdir()
+        got = _resolve_run_dir(runs, "run_20260101_010101")
+        assert got is not None and got.name == "run_20260101_010101_proj_do-thing"
+    print("ok: self-identifying run id, summary.md sections, INDEX append, prefix run resolution")
+
+
 def test_commit_guidance():
     from harness.runner import COMMIT_GUIDANCE, LEAD_GUIDANCE, RunConfig, Runner
 
@@ -312,6 +347,7 @@ if __name__ == "__main__":
     test_runner_writes_mcp_config()
     test_watch_render_and_resolve()
     test_default_mcp()
+    test_run_summary_and_naming()
     test_commit_guidance()
     test_context_bar()
     test_workspace_sandbox()

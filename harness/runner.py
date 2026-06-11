@@ -10,6 +10,7 @@ across loop iterations and the reflection turn.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -131,11 +132,31 @@ class RunConfig:
     extra_mcp_servers: dict[str, Any] = field(default_factory=dict)
 
 
+def _run_slug(text: str, max_len: int) -> str:
+    """Filesystem-safe, human-readable slug for run-dir names."""
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return s[:max_len].rstrip("-")
+
+
+def make_run_id(workdir: Path, task: str) -> str:
+    """run_<timestamp>_<project>_<task> — self-identifying so a flat runs/ dir and
+    its INDEX stay scannable across projects. Timestamp leads, so reverse-lexical
+    sort is still chronological and prefix lookups (run_<ts>) still resolve."""
+    parts = ["run", datetime.now().strftime("%Y%m%d_%H%M%S")]
+    project = _run_slug(workdir.name, 20)
+    if project:
+        parts.append(project)
+    task_slug = _run_slug(" ".join(task.split()[:6]), 30)
+    if task_slug:
+        parts.append(task_slug)
+    return "_".join(parts)
+
+
 class Runner:
-    def __init__(self, config: RunConfig, on_lead_event=None):
+    def __init__(self, config: RunConfig, on_lead_event=None, task: str = ""):
         self.config = config
         self.workdir = config.workdir.resolve()
-        self.run_id = "run_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_id = make_run_id(self.workdir, task)
         self.run_dir = (config.runs_dir / self.run_id).resolve()
         self.notes_dir = self.run_dir / "notes"
         self.notes_dir.mkdir(parents=True, exist_ok=True)

@@ -343,6 +343,96 @@ def _report_changes(workdir: Path, baseline: set[str] | None) -> None:
             _err(f"  {line}")
 
 
+def _summary_md(m: dict) -> str:
+    """Render the per-run session report (what / why / how) as Markdown."""
+    L = [
+        f"# {m['run_id']}",
+        "",
+        f"- **Project:** {m['project']}  (`{m['workdir']}`)",
+        f"- **When:** {m['date']}",
+        f"- **Mode:** {m['mode']}",
+        f"- **Outcome:** {m['outcome']}",
+    ]
+    if m.get("models"):
+        L.append(f"- **Models:** {', '.join(m['models'])}")
+    if m.get("cost"):
+        L.append(f"- **Cost:** ${m['cost']:.2f}")
+    L += ["", "## Task", "", m["task"].strip() or "_(none)_"]
+    if m.get("plan"):
+        L += ["", "## Plan", "", m["plan"].strip()]
+    L += ["", "## What changed", ""]
+    L += (["```", *m["changed"], "```"] if m.get("changed")
+          else ["_No new file changes since run start._"])
+    if m.get("subagents"):
+        L += ["", "## Subagents", "", *(f"- {s}" for s in m["subagents"])]
+    L += ["", "## Summary", "", m.get("final_text", "").strip() or "_(none)_"]
+    L += ["", "## Artifacts", "",
+          "- `events.jsonl` — full event log",
+          "- `usage.json` — token/cost rollup"]
+    if m.get("notes"):
+        L.append("- `notes/`: " + ", ".join(m["notes"]))
+    return "\n".join(L) + "\n"
+
+
+def _append_index(runs_dir: Path, *, run_id: str, project: str, task: str,
+                  outcome: str, date: str) -> None:
+    """One grep-able row per run in runs/INDEX.md — the cross-project discovery layer."""
+    idx = runs_dir / "INDEX.md"
+    try:
+        if not idx.exists():
+            idx.write_text("# Harness runs\n\n| date | project | task | outcome | run |\n"
+                           "|---|---|---|---|---|\n")
+        task1 = " ".join(task.split())[:60].replace("|", "/")
+        with idx.open("a") as f:
+            f.write(f"| {date} | {project} | {task1} | {outcome} | {run_id} |\n")
+    except OSError:
+        pass
+
+
+def _write_summary(runner: Runner, args: argparse.Namespace, final_text: str,
+                   exit_code: int, iterations: int, baseline: set[str] | None) -> None:
+    """Persist a per-run summary.md (what/why/how) and append to runs/INDEX.md."""
+    models, cost, subagents = [], 0.0, []
+    try:  # models + cost + subagents from the usage.json _report_usage just wrote
+        usage = json.loads((runner.run_dir / "usage.json").read_text())
+        models = sorted(usage.get("by_model", {}))
+        cost = sum((mu.get("costUSD") or 0.0) for mu in usage.get("by_model", {}).values())
+        subagents = [f"{e.get('agent', '?')} ({e.get('model') or e.get('backend') or '?'})"
+                     for e in usage.get("subagents", [])]
+    except (OSError, ValueError):
+        pass
+
+    changed: list[str] = []
+    after = _git_status_set(runner.workdir)
+    if after is not None and baseline is not None:
+        changed = sorted(after - baseline)
+
+    plan = runner.plan_path.read_text() if runner.plan_path.exists() else ""
+    try:
+        notes = sorted(p.name for p in runner.notes_dir.iterdir() if p.is_file())
+    except OSError:
+        notes = []
+
+    mode = ("loop" if args.command == "loop" else "run") + (" · plan-first" if args.plan_first else "")
+    outcome = ("done" if exit_code == 0 else "not done") + (
+        f" ({iterations} iter)" if args.command == "loop" else "")
+    date = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    md = _summary_md({
+        "run_id": runner.run_id, "project": runner.workdir.name, "workdir": str(runner.workdir),
+        "date": date, "mode": mode, "outcome": outcome, "models": models, "cost": cost,
+        "task": args.task, "plan": plan, "changed": changed, "subagents": subagents,
+        "final_text": final_text, "notes": notes,
+    })
+    try:
+        (runner.run_dir / "summary.md").write_text(md)
+        _err(dim(f"\n· summary: {runner.run_dir / 'summary.md'}"))
+    except OSError:
+        pass
+    _append_index(runner.run_dir.parent, run_id=runner.run_id, project=runner.workdir.name,
+                  task=args.task, outcome=outcome, date=date)
+
+
 def _make_loop_printer(console: StatusConsole, max_iterations: int, events: EventLog | None = None):
     def _print_loop_event(event: dict) -> None:
         t = event.get("type")
@@ -446,7 +536,7 @@ def _build_config(args: argparse.Namespace) -> RunConfig:
 
 async def _execute(args: argparse.Namespace) -> int:
     config = _build_config(args)
-    runner = Runner(config)
+    runner = Runner(config, task=args.task)
     console = StatusConsole(runner.notes_dir, enabled=not args.no_status)
     console.mode = "LOOP" if args.command == "loop" else "RUN"
     # The same events.jsonl the MCP server appends subagent activity to; the lead
@@ -461,6 +551,7 @@ async def _execute(args: argparse.Namespace) -> int:
     stop = asyncio.Event()
     tail_task = asyncio.create_task(_tail_events(console, runner.events_path, stop))
     tick_task = asyncio.create_task(console.ticker(stop))
+    iterations = 1
     try:
         first_prompt = None
         if args.plan_first:
@@ -491,6 +582,7 @@ async def _execute(args: argparse.Namespace) -> int:
             )
             final_text = result.last_text
             exit_code = 0 if result.done else 1
+            iterations = result.iterations
             console.log(
                 f"\n{'✓ done' if result.done else '✗ not done'} after "
                 f"{result.iterations} iteration(s)"
@@ -507,6 +599,7 @@ async def _execute(args: argparse.Namespace) -> int:
 
     _report_usage(runner, lead)
     _report_changes(runner.workdir, baseline)
+    _write_summary(runner, args, final_text, exit_code, iterations, baseline)
     # stdout carries the final answer for pipes/automation. When both streams are
     # a TTY, the answer was already streamed live above — reprinting would just
     # duplicate it on the same screen.
@@ -519,13 +612,17 @@ async def _execute(args: argparse.Namespace) -> int:
 
 
 def _resolve_run_dir(runs_dir: Path, run_id: str | None) -> Path | None:
-    """Pick the run to watch: an explicit id (with or without the run_ prefix), or
-    the newest run. Run dirs are timestamp-named, so a reverse lexical sort is
-    chronological."""
+    """Pick the run to watch: an explicit id, a prefix (e.g. just the timestamp
+    run_<ts>, which resolves a slugged dir), or the newest run. Run dirs lead with
+    the timestamp, so a reverse lexical sort is chronological."""
     if run_id:
         for cand in (runs_dir / run_id, runs_dir / f"run_{run_id}"):
             if cand.is_dir():
                 return cand
+        for pat in (f"{run_id}*", f"run_{run_id}*"):  # prefix match
+            matches = sorted((p for p in runs_dir.glob(pat) if p.is_dir()), reverse=True)
+            if matches:
+                return matches[0]
         return None
     runs = sorted((p for p in runs_dir.glob("run_*") if p.is_dir()), reverse=True)
     return runs[0] if runs else None
