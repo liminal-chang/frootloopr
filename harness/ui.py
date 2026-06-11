@@ -101,6 +101,40 @@ def context_window(model: str | None) -> int:
     return 200_000
 
 
+# -- notifications ------------------------------------------------------------------
+
+
+def bell(enabled: bool = True) -> None:
+    """Ring the terminal bell (BEL) on a milestone — an audible nudge for whoever
+    is watching the run. No-op when stderr isn't a TTY (automation) or disabled."""
+    if enabled and sys.stderr.isatty():
+        sys.stderr.write("\a")
+        sys.stderr.flush()
+
+
+def _osa(s: str) -> str:
+    """Quote a string as an AppleScript string literal."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def notify(title: str, message: str) -> None:
+    """Opt-in macOS desktop notification (set HARNESS_NOTIFY=1). Best-effort:
+    never raises, never blocks the render meaningfully."""
+    if os.environ.get("HARNESS_NOTIFY") != "1":
+        return
+    import shutil
+    import subprocess
+
+    if not shutil.which("osascript"):
+        return
+    script = f"display notification {_osa(message)} with title {_osa(title)}"
+    try:
+        subprocess.run(["osascript", "-e", script], check=False, timeout=5,
+                       capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 # -- status segments ----------------------------------------------------------------
 
 # segment: (text, fg_256). No backgrounds — sections are told apart by text color.

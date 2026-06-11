@@ -170,7 +170,92 @@ def test_runner_writes_mcp_config():
         assert r.notes_dir.is_dir()
         prompt = r.first_prompt("do the thing")
         assert "do the thing" in prompt and str(r.notes_dir) in prompt
-        print("ok: runner writes merged MCP config and builds the first prompt")
+
+        # subagent config: third-party servers only — no harness key (no spawn_* recursion)
+        sub_path = r.run_dir / "subagent_mcp_config.json"
+        sub_servers = json.loads(sub_path.read_text())["mcpServers"]
+        assert "fs" in sub_servers and "harness" not in sub_servers
+        assert env["HARNESS_SUBAGENT_MCP_CONFIG"] == str(sub_path)
+
+        # no extra servers -> no subagent config file, no env var
+        r2 = Runner(RunConfig(workdir=base, runs_dir=base / "runs2", memory_dir=base / "memory"))
+        assert not (r2.run_dir / "subagent_mcp_config.json").exists()
+        env2 = json.loads((r2.run_dir / "mcp_config.json").read_text())["mcpServers"]["harness"]["env"]
+        assert "HARNESS_SUBAGENT_MCP_CONFIG" not in env2
+        print("ok: runner writes merged MCP config, harness-free subagent config, and the first prompt")
+
+
+def test_watch_render_and_resolve():
+    import contextlib
+    import io
+    import json
+
+    from harness.cli import LeadRenderer, _render_event, _resolve_run_dir
+    from harness.events import EventLog, read_events
+    from harness.status import StatusConsole
+    from harness.ui import bell
+
+    bell(True)  # non-TTY: must be a harmless no-op, never raises
+
+    with tempfile.TemporaryDirectory() as d:
+        runs = Path(d) / "runs"
+        (runs / "run_20260101_000000" / "notes").mkdir(parents=True)
+        (runs / "run_20260102_000000" / "notes").mkdir(parents=True)
+        # newest by default; explicit id with/without run_ prefix; missing -> None
+        assert _resolve_run_dir(runs, None).name == "run_20260102_000000"
+        assert _resolve_run_dir(runs, "run_20260101_000000").name == "run_20260101_000000"
+        assert _resolve_run_dir(runs, "20260101_000000").name == "run_20260101_000000"
+        assert _resolve_run_dir(runs, "nope") is None
+
+        console = StatusConsole(runs / "run_20260102_000000" / "notes", enabled=False)
+        events = [
+            {"agent": "lead", "type": "model", "model": "claude-fable-5", "mirror": True},
+            {"agent": "lead", "type": "text", "text": "Planning.\nstep two", "mirror": True},
+            {"agent": "lead", "type": "tool", "tool": "Read", "summary": "cli.py", "mirror": True},
+            {"agent": "lead", "type": "ctx", "tokens": 1234, "mirror": True},
+            {"agent": "lead", "type": "memory", "op": "write", "name": "x"},  # real memory event, no mirror
+            {"agent": "subagent-1", "type": "spawn_start", "backend": "claude", "model": "haiku", "task": "scan"},
+            {"agent": "subagent-1", "type": "tool", "tool": "mcp__context7__query-docs", "summary": "useEffect"},
+            {"agent": "subagent-1", "type": "spawn_end", "duration_s": 4.2, "usage": {"input_tokens": 9, "output_tokens": 3}},
+            {"agent": "loop", "type": "iteration_start", "iteration": 1, "max_iterations": 5, "mirror": True},
+            {"agent": "loop", "type": "check", "iteration": 1, "max_iterations": 5, "passed": False, "exit_code": 1, "mirror": True},
+            {"agent": "run", "type": "run_end", "run_id": "run_x", "status": "done", "ok": True, "mirror": True},
+        ]
+        with contextlib.redirect_stderr(io.StringIO()):
+            for e in events:
+                _render_event(console, e, bell_enabled=False)  # must not raise
+        assert console.lead_model == "claude-fable-5"
+        assert console.lead_ctx == 1234
+
+    # LeadRenderer mirrors lead milestones into events.jsonl (flagged) for the watcher
+    with tempfile.TemporaryDirectory() as d:
+        log = EventLog(Path(d) / "events.jsonl")
+        console = StatusConsole(Path(d), enabled=False)
+        lead = LeadRenderer(console, events=log)
+        with contextlib.redirect_stderr(io.StringIO()):
+            lead({"type": "system", "subtype": "init", "model": "claude-opus-4-8", "session_id": "s"})
+            lead({"type": "assistant", "message": {
+                "content": [{"type": "text", "text": "hi"},
+                            {"type": "tool_use", "name": "Read", "input": {"file_path": "a.py"}}],
+                "usage": {"input_tokens": 10, "output_tokens": 2}}})
+        recs = read_events(Path(d) / "events.jsonl")
+        kinds = {(r["agent"], r["type"]) for r in recs}
+        assert {("lead", "model"), ("lead", "text"), ("lead", "tool"), ("lead", "ctx")} <= kinds
+        assert all(r.get("mirror") for r in recs), "lead mirrors must be flagged so the live tail skips them"
+    print("ok: watch resolves newest run, renders every event kind, lead mirrors are flagged")
+
+
+def test_default_mcp():
+    import json
+
+    from harness.cli import _PKG_ROOT, _default_mcp_servers
+
+    p = _PKG_ROOT / "mcp" / "default.json"
+    assert p.exists(), "mcp/default.json should ship so Context7 is on by default"
+    assert "context7" in json.loads(p.read_text())["mcpServers"]
+    assert "context7" in _default_mcp_servers(no_default=False)
+    assert _default_mcp_servers(no_default=True) == {}  # --no-default-mcp opts out
+    print("ok: Context7 ships as a default MCP server; --no-default-mcp opts out")
 
 
 def test_context_bar():
@@ -209,6 +294,8 @@ if __name__ == "__main__":
     test_event_normalization_and_log()
     test_rate_limit_and_model_usage()
     test_runner_writes_mcp_config()
+    test_watch_render_and_resolve()
+    test_default_mcp()
     test_context_bar()
     test_workspace_sandbox()
     print("\nAll smoke tests passed.")

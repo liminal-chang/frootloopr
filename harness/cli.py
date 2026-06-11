@@ -23,22 +23,41 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import load_mcp_servers
-from .events import context_tokens, normalize_claude_event, read_events
+from .events import EventLog, context_tokens, normalize_claude_event, read_events
 from .loop import run_loop
 from .runner import REFLECTION_PROMPT, RunConfig, Runner
 from .status import StatusConsole
-from .ui import agent_color, bold, bold_fg, dim, display_tool, fg, fmt_tok
+from .ui import agent_color, bell, bold, bold_fg, dim, display_tool, fg, fmt_tok, notify
 
 
 # -- lead-agent live rendering (raw stream-json records) ---------------------------
 
 
+def _log_lead_text(console: StatusConsole, text: str) -> None:
+    console.log("")
+    for i, line in enumerate(text.splitlines()):
+        prefix = f"{fg(67, '⏺')} " if i == 0 else "  "
+        console.log(f"{prefix}{line}")
+
+
+def _log_lead_tool(console: StatusConsole, tool: str, summary: str) -> None:
+    name = display_tool(tool)
+    console.log(f"{fg(34, '⏺')} {bold(name)}{dim('(' + summary + ')')}")
+
+
 class LeadRenderer:
-    def __init__(self, console: StatusConsole):
+    def __init__(self, console: StatusConsole, events: EventLog | None = None):
         self.console = console
+        # Mirror lead milestones into events.jsonl (flagged mirror=True) so
+        # `harness watch` can replay a faithful run; the live tail skips them.
+        self.events = events
         self.model: str | None = None
         self.context: int = 0
         self.rate_limits: dict[str, dict] = {}  # rateLimitType -> latest info seen
+
+    def _mirror(self, type: str, **fields) -> None:
+        if self.events:
+            self.events.write("lead", type, mirror=True, **fields)
 
     def __call__(self, record: dict) -> None:
         for ev in normalize_claude_event(record):
@@ -51,18 +70,17 @@ class LeadRenderer:
                     self.model = ev["model"]
                     self.console.set_lead(self.model)
                     self.console.log(dim(f"· lead model {self.model}"))
+                    self._mirror("model", model=self.model)
             elif ev["type"] == "text":
-                self.console.log("")
-                lines = ev["text"].splitlines()
-                for i, line in enumerate(lines):
-                    prefix = f"{fg(67, '⏺')} " if i == 0 else "  "
-                    self.console.log(f"{prefix}{line}")
+                _log_lead_text(self.console, ev["text"])
+                self._mirror("text", text=ev["text"][:500])
             elif ev["type"] == "tool":
-                name = display_tool(ev["tool"])
-                self.console.log(f"{fg(34, '⏺')} {bold(name)}{dim('(' + ev['summary'] + ')')}")
+                _log_lead_tool(self.console, ev["tool"], ev["summary"])
+                self._mirror("tool", tool=ev["tool"], summary=ev["summary"])
             elif ev["type"] == "turn_usage":
                 self.context = context_tokens(ev["usage"])
                 self.console.lead_turn(self.context, ev["usage"])
+                self._mirror("ctx", tokens=self.context)
 
 
 # -- subagent live rendering (tailed events.jsonl records) -------------------------
@@ -110,6 +128,57 @@ def _render_sub_event(console: StatusConsole, e: dict) -> None:
         console.log(f"{fg(176, '⏺')} {bold('memory')} {dim(detail)}")
 
 
+def _render_event(console: StatusConsole, e: dict, bell_enabled: bool = True) -> None:
+    """Replay one events.jsonl record for `harness watch` — the unified path that
+    renders lead, subagent, AND loop/run milestones. The live run renders the
+    non-subagent kinds in-process, so they reach the file only as mirror=True
+    records (skipped by the live tail); here we render them too."""
+    if not e.get("mirror"):
+        _render_sub_event(console, e)  # subagent + memory events, exactly as live
+        if e.get("type") == "spawn_end" and e.get("error"):
+            bell(bell_enabled)
+        return
+
+    t = e.get("type")
+    if e.get("agent") == "lead":
+        if t == "model":
+            console.set_lead(e.get("model"))
+            console.log(dim(f"· lead model {e.get('model')}"))
+        elif t == "text":
+            _log_lead_text(console, e.get("text", ""))
+        elif t == "tool":
+            _log_lead_tool(console, e.get("tool", "?"), e.get("summary", ""))
+        elif t == "ctx":
+            console.lead_turn(e.get("tokens") or 0, None)
+        elif t == "reflection_start":
+            console.log(f"{fg(176, '⏺')} {bold('memory')} {dim('end-of-run reflection')}")
+        console.touch()
+        return
+    if t == "iteration_start":
+        n, m = e.get("iteration"), e.get("max_iterations", "?")
+        console.iter_text = f"iter {n}/{m}"
+        console.log(bold_fg(30, f"\n── iteration {n}/{m} ──"))
+    elif t == "check":
+        n, m = e.get("iteration"), e.get("max_iterations", "?")
+        passed = e.get("passed")
+        console.iter_text = f"iter {n}/{m} {'✓' if passed else '✗'}"
+        if passed:
+            console.log(f"{fg(34, '✓')} {bold('check passed')}")
+        else:
+            console.log(f"{fg(160, '✗')} {bold('check failed')} {dim('(exit ' + str(e.get('exit_code')) + ')')}")
+        bell(bell_enabled)
+    elif t == "backend_retry":
+        console.log(f"{fg(178, '⚠')} backend error, retrying in {e.get('wait_s')}s: {dim(str(e.get('error', '')))}")
+    elif t == "run_start":
+        console.log(f"{bold('● ' + str(e.get('run_id', '')))} {dim('started · ' + str(e.get('mode', '')))}")
+    elif t == "run_end":
+        status = e.get("status", "")
+        console.log(f"\n{fg(34 if e.get('ok') else 160, '●')} {bold('run ' + status)}")
+        bell(bell_enabled)
+        notify("harness", f"run {status}: {e.get('run_id', '')}")
+    console.touch()
+
+
 async def _tail_events(console: StatusConsole, path: Path, stop: asyncio.Event) -> None:
     pos = 0
     while True:
@@ -118,9 +187,12 @@ async def _tail_events(console: StatusConsole, path: Path, stop: asyncio.Event) 
                 f.seek(pos)
                 for line in f:
                     try:
-                        _render_sub_event(console, json.loads(line))
+                        e = json.loads(line)
                     except ValueError:
-                        pass
+                        continue
+                    if e.get("mirror"):
+                        continue  # lead/loop/run milestones: rendered in-process already
+                    _render_sub_event(console, e)
                 pos = f.tell()
         if stop.is_set():
             return  # one final drain happened above
@@ -271,7 +343,7 @@ def _report_changes(workdir: Path, baseline: set[str] | None) -> None:
             _err(f"  {line}")
 
 
-def _make_loop_printer(console: StatusConsole, max_iterations: int):
+def _make_loop_printer(console: StatusConsole, max_iterations: int, events: EventLog | None = None):
     def _print_loop_event(event: dict) -> None:
         t = event.get("type")
         if t == "iteration_start":
@@ -289,6 +361,10 @@ def _make_loop_printer(console: StatusConsole, max_iterations: int):
             console.log(f"{fg(178, '⚠')} backend error, retrying in {event['wait_s']}s: {dim(event['error'])}")
         elif t == "reflection_start":
             console.log(f"{fg(176, '⏺')} {bold('memory')} {dim('end-of-run reflection')}")
+        # Mirror for `harness watch` (skipped by the live tail via mirror=True).
+        if events:
+            events.write("loop", t, mirror=True, max_iterations=max_iterations,
+                         **{k: v for k, v in event.items() if k != "type"})
 
     return _print_loop_event
 
@@ -315,6 +391,7 @@ async def _plan_phase(runner: Runner, console: StatusConsole, task: str) -> bool
             console.log(dim("· non-interactive: auto-approving plan"))
             return True
 
+        bell()  # nudge: an attended plan is waiting for your approval
         console.pause()
         rule = dim("─" * 40)
         print(f"\n{rule}\n{bold('PLAN')}\n{rule}\n{result.text}\n{rule}", file=sys.stderr)
@@ -371,10 +448,14 @@ async def _execute(args: argparse.Namespace) -> int:
     runner = Runner(config)
     console = StatusConsole(runner.notes_dir, enabled=not args.no_status)
     console.mode = "LOOP" if args.command == "loop" else "RUN"
-    lead = LeadRenderer(console)
+    # The same events.jsonl the MCP server appends subagent activity to; the lead
+    # mirrors its own milestones here too so `harness watch` sees the whole run.
+    events_log = EventLog(runner.events_path)
+    lead = LeadRenderer(console, events=events_log)
     runner.on_lead_event = lead
     console.log(f"{bold(runner.run_id)}  {dim('notes: ' + str(runner.notes_dir))}")
     baseline = _git_status_set(runner.workdir)
+    events_log.write("run", "run_start", mirror=True, run_id=runner.run_id, mode=console.mode)
 
     stop = asyncio.Event()
     tail_task = asyncio.create_task(_tail_events(console, runner.events_path, stop))
@@ -394,6 +475,7 @@ async def _execute(args: argparse.Namespace) -> int:
             )
             if runner.config.reflect:
                 console.log(f"\n{fg(176, '⏺')} {bold('memory')} {dim('end-of-run reflection')}")
+                events_log.write("lead", "reflection_start", mirror=True)
                 await runner.send(REFLECTION_PROMPT)
             final_text, exit_code = result.text, 0
         else:
@@ -403,7 +485,7 @@ async def _execute(args: argparse.Namespace) -> int:
                 until=args.until,
                 max_iterations=args.max_iterations,
                 retry_wait_s=args.retry_wait,
-                on_event=_make_loop_printer(console, args.max_iterations),
+                on_event=_make_loop_printer(console, args.max_iterations, events=events_log),
                 first_prompt=first_prompt,
             )
             final_text = result.last_text
@@ -412,6 +494,10 @@ async def _execute(args: argparse.Namespace) -> int:
                 f"\n{'✓ done' if result.done else '✗ not done'} after "
                 f"{result.iterations} iteration(s)"
             )
+        status = "done" if exit_code == 0 else "not done"
+        events_log.write("run", "run_end", mirror=True, run_id=runner.run_id,
+                         status=status, ok=(exit_code == 0))
+        bell()  # audible nudge that the run finished (TTY only)
     finally:
         stop.set()
         await tail_task
@@ -426,6 +512,70 @@ async def _execute(args: argparse.Namespace) -> int:
     if not (sys.stdout.isatty() and sys.stderr.isatty()):
         print(final_text)
     return exit_code
+
+
+# -- watch (live-render a run from a second terminal) --------------------------------
+
+
+def _resolve_run_dir(runs_dir: Path, run_id: str | None) -> Path | None:
+    """Pick the run to watch: an explicit id (with or without the run_ prefix), or
+    the newest run. Run dirs are timestamp-named, so a reverse lexical sort is
+    chronological."""
+    if run_id:
+        for cand in (runs_dir / run_id, runs_dir / f"run_{run_id}"):
+            if cand.is_dir():
+                return cand
+        return None
+    runs = sorted((p for p in runs_dir.glob("run_*") if p.is_dir()), reverse=True)
+    return runs[0] if runs else None
+
+
+async def _watch(args: argparse.Namespace) -> int:
+    """Tail a run's events.jsonl and render it through the status UI. Runs in its
+    own process (a second terminal/pane) so a live view costs the orchestrating
+    session nothing — the run writes the file; this only reads it."""
+    runs_dir = Path(args.runs_dir)
+    run_dir = _resolve_run_dir(runs_dir, args.run_id)
+    if run_dir is None:
+        where = f" matching '{args.run_id}'" if args.run_id else ""
+        _err(f"no run found in {runs_dir}{where} (looked for run_* directories)")
+        return 1
+
+    events_path = run_dir / "events.jsonl"
+    console = StatusConsole(run_dir / "notes", enabled=not args.no_status)
+    console.log(f"{bold('watching ' + run_dir.name)}  {dim(str(events_path))}")
+    # A replay (--once) of a finished run shouldn't ring a flurry of stale bells.
+    bell_enabled = not args.no_bell and not args.once
+
+    stop = asyncio.Event()
+    tick = asyncio.create_task(console.ticker(stop))
+    pos, finished = 0, False
+    try:
+        while True:
+            if events_path.exists():
+                with events_path.open() as f:
+                    f.seek(pos)
+                    for line in f:
+                        try:
+                            e = json.loads(line)
+                        except ValueError:
+                            continue
+                        _render_event(console, e, bell_enabled)
+                        if e.get("type") == "run_end":
+                            finished = True
+                    pos = f.tell()
+            if args.once or finished:
+                break
+            await asyncio.sleep(0.3)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        stop.set()
+        await tick
+        console.finish()
+    if finished and not args.once:
+        console.log(dim("· run finished — watch exiting"))
+    return 0
 
 
 # Artifacts anchor to the harness install, not the launch cwd — so the CLI works
@@ -519,7 +669,27 @@ def main() -> int:
     p_loop.add_argument("--retry-wait", type=int, default=300,
                         help="Seconds to wait before retrying after a backend error (e.g. usage limits)")
 
+    p_watch = sub.add_parser(
+        "watch",
+        help="Live-render a run in a second terminal (zero token cost — just reads events.jsonl)",
+        epilog="  harness watch                 # follow the newest run\n"
+               "  harness watch run_20260611_134642\n"
+               "  harness watch --once          # snapshot current state and exit",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_watch.add_argument("run_id", nargs="?", help="Run id to watch (default: the newest run)")
+    p_watch.add_argument("--runs-dir", default=str(_PKG_ROOT / "runs"),
+                         help=f"Run artifacts dir (default: {_PKG_ROOT / 'runs'})")
+    p_watch.add_argument("--once", action="store_true",
+                         help="Render the run's current state and exit (no follow)")
+    p_watch.add_argument("--no-bell", action="store_true",
+                         help="Suppress the terminal bell on milestones")
+    p_watch.add_argument("--no-status", action="store_true",
+                         help="Disable the sticky status line")
+
     args = parser.parse_args()
+    if args.command == "watch":
+        return asyncio.run(_watch(args))
     return asyncio.run(_execute(args))
 
 
