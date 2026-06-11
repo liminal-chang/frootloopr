@@ -439,6 +439,7 @@ def _build_config(args: argparse.Namespace) -> RunConfig:
         subagent_model=args.subagent_model,
         spawn_timeout_s=args.spawn_timeout,
         reflect=not args.no_reflect,
+        commit=args.commit,
         extra_mcp_servers=servers,
     )
 
@@ -597,6 +598,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-default-mcp", action="store_true",
                    help="Skip auto-mounting mcp/default.json (Context7) for this run")
     p.add_argument("--no-reflect", action="store_true", help="Skip the end-of-run memory reflection step")
+    p.add_argument("--commit", action="store_true",
+                   help="Let the lead commit completed work (branch-first, by concern); off by default")
     p.add_argument("--no-status", action="store_true", help="Disable the sticky status line")
     p.add_argument("--plan-first", action="store_true",
                    help="Read-only plan phase first (saved to notes/plan.md); attended runs gate "

@@ -58,6 +58,24 @@ APIs from memory; claude subagents have the same tools.
 wait for approval; make reasonable assumptions and note them in your final summary.
 """ + CODE_NORMS
 
+# Appended to the lead guidance only when --commit is set. The pattern lives here
+# (not in a skill) so it reaches the lead on every run, including terminal use —
+# and only the lead commits, never subagents (parallel commits race the workdir).
+COMMIT_GUIDANCE = """
+
+Committing your work (you have --commit; do this yourself — subagents never \
+commit):
+- Branch first: if the workdir is on its default branch (main/master), create a \
+descriptive feature branch before committing.
+- Commit in logical units — one coherent change per commit, message traceable to \
+a single concern — not one catch-all dump at the end.
+- Message: imperative subject line; a short body explaining WHY when it isn't \
+obvious. End every message with the trailer line: \
+Co-Authored-By: Claude (harness lead) <noreply@anthropic.com>
+- Run the project's checks/tests before committing; don't commit a red tree — fix \
+it or report it instead.
+- Do NOT push or open PRs unless the task explicitly asks."""
+
 # Interactive-only tools that deadlock or thrash a headless run: nobody is there
 # to answer a question or approve a native plan-mode exit (the harness driver is
 # the gate, not the claude CLI's interactive machinery).
@@ -109,6 +127,7 @@ class RunConfig:
     spawn_timeout_s: int = 3600
     lead_timeout_s: int = 7200
     reflect: bool = True
+    commit: bool = False  # --commit: lead commits completed work, branch-first
     extra_mcp_servers: dict[str, Any] = field(default_factory=dict)
 
 
@@ -179,6 +198,11 @@ class Runner:
         parts.append(task)
         return "\n\n".join(parts)
 
+    def _lead_system_prompt(self) -> str:
+        """Lead guidance, plus the commit pattern when --commit is set. Byte-stable
+        within a run (config is fixed), preserving prompt caching."""
+        return LEAD_GUIDANCE + (COMMIT_GUIDANCE if self.config.commit else "")
+
     async def send(self, prompt: str, permission_mode: str | None = None) -> BackendResult:
         """Send one turn to the lead agent, continuing its session if one exists.
 
@@ -187,7 +211,7 @@ class Runner:
         result = await self.lead.run(
             prompt,
             cwd=self.workdir,
-            system_append=LEAD_GUIDANCE,
+            system_append=self._lead_system_prompt(),
             mcp_config=self._mcp_config_path,
             resume=self.session_id,
             timeout_s=self.config.lead_timeout_s,

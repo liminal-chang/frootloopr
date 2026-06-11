@@ -64,7 +64,8 @@ SUBAGENT_GUIDANCE = (
     "then discarded: make it a complete, distilled result (facts, paths, numbers, "
     "conclusions) — not a narrative of what you did. If third-party MCP tools are "
     "available (e.g. Context7 for live library docs), prefer them over recalling "
-    "library/framework APIs from memory."
+    "library/framework APIs from memory. Never run git commit/push — version "
+    "control is the lead's job; leave your changes in the workdir."
 ) + CODE_NORMS
 
 

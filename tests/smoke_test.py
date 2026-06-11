@@ -258,6 +258,22 @@ def test_default_mcp():
     print("ok: Context7 ships as a default MCP server; --no-default-mcp opts out")
 
 
+def test_commit_guidance():
+    from harness.runner import COMMIT_GUIDANCE, LEAD_GUIDANCE, RunConfig, Runner
+
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d)
+        off = Runner(RunConfig(workdir=base, runs_dir=base / "r1", memory_dir=base / "m"))
+        sp_off = off._lead_system_prompt()
+        assert LEAD_GUIDANCE in sp_off and COMMIT_GUIDANCE not in sp_off  # off by default
+
+        on = Runner(RunConfig(workdir=base, runs_dir=base / "r2", memory_dir=base / "m", commit=True))
+        sp_on = on._lead_system_prompt()
+        assert COMMIT_GUIDANCE in sp_on
+        assert "branch" in sp_on.lower() and "subagents never" in sp_on.lower()
+    print("ok: --commit appends the branch-first commit pattern to the lead prompt only when set")
+
+
 def test_context_bar():
     import re
 
@@ -296,6 +312,7 @@ if __name__ == "__main__":
     test_runner_writes_mcp_config()
     test_watch_render_and_resolve()
     test_default_mcp()
+    test_commit_guidance()
     test_context_bar()
     test_workspace_sandbox()
     print("\nAll smoke tests passed.")
