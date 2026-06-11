@@ -43,13 +43,13 @@ the short alias **`fl`**.
 only resolves from this folder. From any other directory, use the absolute path:
 
 ```sh
-"/path/to/dev/harness/.venv/bin/fl" run "task" --workdir .
+"/path/to/frootloopr/.venv/bin/fl" run "task" --workdir .
 ```
 
 or (recommended) add an alias to `~/.zshrc` once, then `fl` works everywhere:
 
 ```sh
-alias fl='"/path/to/dev/harness/.venv/bin/fl"'
+alias fl='"/path/to/frootloopr/.venv/bin/fl"'
 ```
 
 The alias takes effect in new terminals (or `source ~/.zshrc` in the current
@@ -92,7 +92,7 @@ are named *in the task text*, relative to that workdir:
 
 ```sh
 fl run "fix the race condition in src/auth.py" --workdir ~/code/api     # one file
-fl run "add docstrings under frootloopr/backends/" --workdir ~/dev/harness  # one dir
+fl run "add docstrings under frootloopr/backends/" --workdir ~/dev/frootloopr  # one dir
 fl run "create dashboard.html from stats.csv" --workdir ~/new-project   # empty dir is fine
 ```
 
@@ -302,7 +302,7 @@ tests/smoke_test.py   offline tests (no auth needed)
 - **`ModuleNotFoundError: No module named 'frootloopr'`** (from the entry point) —
   historical: when this project lived in iCloud-synced `~/Desktop`, iCloud kept
   re-applying the macOS `hidden` flag across the venv, and Python 3.13 silently
-  skips hidden `.pth` files. Moving to `~/dev/harness` (outside iCloud) removed
+  skips hidden `.pth` files. Moving to `~/dev/frootloopr` (outside iCloud) removed
   the root cause; `site-packages/sitecustomize.py` remains as a safety net. If
   this appears: check `sitecustomize.py` exists, and run `ls -lO
   .venv/lib/python3.13/site-packages/*.pth` for `hidden` flags.
