@@ -18,6 +18,8 @@ import asyncio
 import json
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 from .config import load_mcp_servers
@@ -36,10 +38,15 @@ class LeadRenderer:
         self.console = console
         self.model: str | None = None
         self.context: int = 0
+        self.rate_limits: dict[str, dict] = {}  # rateLimitType -> latest info seen
 
     def __call__(self, record: dict) -> None:
         for ev in normalize_claude_event(record):
-            if ev["type"] == "init" and ev.get("model"):
+            if ev["type"] == "rate_limit":
+                info = ev.get("info") or {}
+                if info.get("rateLimitType"):
+                    self.rate_limits[info["rateLimitType"]] = info
+            elif ev["type"] == "init" and ev.get("model"):
                 if ev["model"] != self.model:
                     self.model = ev["model"]
                     self.console.set_lead(self.model)
@@ -78,6 +85,7 @@ def _render_sub_event(console: StatusConsole, e: dict) -> None:
         console.spawn_ctx(agent, e.get("tokens") or 0)  # status bar only, no log line
     elif t == "tool":
         name = display_tool(e.get("tool", "?"))
+        console.spawn_activity(agent, f"{name} {e.get('summary', '')}".strip())
         console.log(f"{fg(c, '│')}  {bold(name)}{dim('(' + e.get('summary', '') + ')')}")
     elif t == "text":
         first = (e.get("text") or "").splitlines()[0][:120] if e.get("text") else ""
@@ -85,7 +93,6 @@ def _render_sub_event(console: StatusConsole, e: dict) -> None:
             console.log(f"{fg(c, '│')}  {dim(first)}")
     elif t == "spawn_end":
         console.spawn_ended(agent, e.get("usage"))
-        console.spawn_activity(agent, f"{name} {e.get('summary', '')}".strip())
         if e.get("error"):
             console.log(f"{fg(c, '╰─')} {fg(160, 'failed')} {dim(str(e['error'])[:200])}")
         else:
@@ -135,6 +142,52 @@ def _sum_usage(usages: list[dict | None]) -> dict:
     return total
 
 
+# claude `modelUsage` fields: token/cost counters to sum vs. per-model constants to keep.
+_MU_SUM = ("inputTokens", "outputTokens", "cacheReadInputTokens",
+           "cacheCreationInputTokens", "costUSD", "webSearchRequests")
+_MU_KEEP = ("contextWindow", "maxOutputTokens")
+
+
+def _merge_model_usage(dest: dict[str, dict], src: dict | None) -> None:
+    for model, mu in (src or {}).items():
+        acc = dest.setdefault(model, {})
+        for k in _MU_SUM:
+            if mu.get(k) is not None:
+                acc[k] = acc.get(k, 0) + mu[k]
+        for k in _MU_KEEP:
+            if mu.get(k) is not None:
+                acc[k] = mu[k]
+
+
+def _fmt_reset(ts: int | None) -> str:
+    """'14:30 (in 2h11m)' for a unix reset timestamp."""
+    if not ts:
+        return "?"
+    when = datetime.fromtimestamp(ts).strftime("%a %H:%M")
+    secs = int(ts - time.time())
+    if secs <= 0:
+        return f"{when} (now)"
+    mins = secs // 60
+    d, rem = divmod(mins, 1440)
+    h, m = divmod(rem, 60)
+    rel = f"{d}d{h}h" if d else f"{h}h{m}m" if h else f"{m}m"
+    return f"{when} (in {rel})"
+
+
+_LIMIT_LABELS = {"five_hour": "5h window", "seven_day": "weekly", "seven_day_opus": "weekly (opus)"}
+
+
+def _report_limits(lead: LeadRenderer) -> None:
+    if not lead.rate_limits:
+        return
+    _err(dim("\nsubscription limits (status + reset only — the CLI doesn't expose % used):"))
+    for rtype, info in lead.rate_limits.items():
+        label = _LIMIT_LABELS.get(rtype, rtype)
+        status = info.get("status", "?")
+        color = 34 if status == "allowed" else 178 if status == "warning" else 160
+        _err(f"  {label:<14} {fg(color, status)}  ·  resets {_fmt_reset(info.get('resetsAt'))}")
+
+
 def _report_usage(runner: Runner, lead: LeadRenderer) -> None:
     rows = []
     lead_total = _sum_usage([t.usage for t in runner.lead_turns])
@@ -154,11 +207,34 @@ def _report_usage(runner: Runner, lead: LeadRenderer) -> None:
     if lead.context:
         _err(f"lead context occupancy (last turn): ~{lead.context:,} tokens")
 
+    # By-model rollup (lead turns + every subagent), with cost — the /usage-style view.
+    model_usage: dict[str, dict] = {}
+    for t in runner.lead_turns:
+        _merge_model_usage(model_usage, t.model_usage)
+    for e in sub_records:
+        _merge_model_usage(model_usage, e.get("model_usage"))
+    if model_usage:
+        _err(dim("\nby model:"))
+        _err(bold(f"{'model':<28} {'input':>9} {'output':>8} {'cache_read':>11} {'cost':>9}"))
+        total_cost = 0.0
+        for model, mu in sorted(model_usage.items()):
+            total_cost += mu.get("costUSD") or 0.0
+            _err(
+                f"{str(model)[:28]:<28} {(mu.get('inputTokens') or 0):>9,} "
+                f"{(mu.get('outputTokens') or 0):>8,} {(mu.get('cacheReadInputTokens') or 0):>11,} "
+                f"${mu.get('costUSD') or 0.0:>8.2f}"
+            )
+        _err(dim(f"{'total':<28} {'':>9} {'':>8} {'':>11} ${total_cost:>8.2f}"))
+
+    _report_limits(lead)
+
     summary = {
         "run_id": runner.run_id,
         "lead": {"model": lead.model, "usage": lead_total, "turns": len(runner.lead_turns),
                  "context_tokens_last_turn": lead.context},
         "subagents": sub_records,
+        "by_model": model_usage,
+        "rate_limits": lead.rate_limits,
     }
     (runner.run_dir / "usage.json").write_text(json.dumps(summary, indent=2))
 

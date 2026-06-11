@@ -20,6 +20,7 @@ class BackendResult:
     session_id: str | None = None  # only backends with resume support set this
     usage: dict | None = None
     model: str | None = None  # the model that actually served the run, if reported
+    model_usage: dict | None = None  # per-model tokens/cost (claude `modelUsage`)
 
 
 class CLIBackend(Protocol):

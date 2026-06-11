@@ -57,9 +57,14 @@ def normalize_claude_event(raw: dict) -> Iterator[dict]:
         yield {
             "type": "result",
             "usage": raw.get("usage"),
+            "model_usage": raw.get("modelUsage"),
             "num_turns": raw.get("num_turns"),
             "duration_ms": raw.get("duration_ms"),
         }
+    elif rtype == "rate_limit_event":
+        # subscription rolling-window status (five_hour / weekly): the CLI reports
+        # status + reset time only — no "% used" / remaining figure to surface.
+        yield {"type": "rate_limit", "info": raw.get("rate_limit_info") or {}}
 
 
 def context_tokens(usage: dict | None) -> int:

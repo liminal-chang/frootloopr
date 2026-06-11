@@ -4,6 +4,7 @@ sandbox. Run with: python tests/smoke_test.py
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -120,6 +121,32 @@ def test_event_normalization_and_log():
     print("ok: stream-json normalization, context occupancy, and event log roundtrip")
 
 
+def test_rate_limit_and_model_usage():
+    from harness.cli import _fmt_reset, _merge_model_usage
+    from harness.events import normalize_claude_event
+
+    rl = {"type": "rate_limit_event",
+          "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 123}}
+    (ev,) = list(normalize_claude_event(rl))
+    assert ev["type"] == "rate_limit" and ev["info"]["rateLimitType"] == "five_hour"
+
+    result = {"type": "result", "result": "ok", "usage": {"output_tokens": 1},
+              "modelUsage": {"m": {"inputTokens": 10, "costUSD": 0.5, "contextWindow": 200000}}}
+    (rev,) = list(normalize_claude_event(result))
+    assert rev["type"] == "result" and rev["model_usage"]["m"]["inputTokens"] == 10
+
+    # counters sum across turns; per-model constants (contextWindow) are kept, not summed
+    acc: dict = {}
+    _merge_model_usage(acc, {"m": {"inputTokens": 10, "costUSD": 0.5, "contextWindow": 200000}})
+    _merge_model_usage(acc, {"m": {"inputTokens": 5, "costUSD": 0.25, "contextWindow": 200000}})
+    assert acc["m"]["inputTokens"] == 15 and abs(acc["m"]["costUSD"] - 0.75) < 1e-9
+    assert acc["m"]["contextWindow"] == 200000
+
+    assert _fmt_reset(None) == "?"
+    assert "(in " in _fmt_reset(int(time.time()) + 3600)
+    print("ok: rate-limit event + per-model usage rollup")
+
+
 def test_runner_writes_mcp_config():
     import json
     from harness.runner import RunConfig, Runner
@@ -146,25 +173,6 @@ def test_runner_writes_mcp_config():
         print("ok: runner writes merged MCP config and builds the first prompt")
 
 
-def test_workspace_sandbox():
-    with tempfile.TemporaryDirectory() as d:
-        ws = Workspace(Path(d) / "run")
-        try:
-            ws.resolve("../../etc/passwd")
-            raise AssertionError("sandbox escape not caught")
-        except ValueError:
-            print("ok: workspace path escape rejected")
-
-
-if __name__ == "__main__":
-    test_offload_large_result()
-    test_offload_small_passthrough_and_exempt()
-    test_memory_write_update_index()
-    test_claude_backend_cmd()
-    test_event_normalization_and_log()
-    test_runner_writes_mcp_config()
-    test_workspace_sandbox()
-    print("\nAll smoke tests passed.")
 def test_context_bar():
     import re
 
@@ -183,4 +191,24 @@ def test_context_bar():
     print("ok: context bar renders fixed width and picks color tier by fullness")
 
 
+def test_workspace_sandbox():
+    with tempfile.TemporaryDirectory() as d:
+        ws = Workspace(Path(d) / "run")
+        try:
+            ws.resolve("../../etc/passwd")
+            raise AssertionError("sandbox escape not caught")
+        except ValueError:
+            print("ok: workspace path escape rejected")
+
+
+if __name__ == "__main__":
+    test_offload_large_result()
+    test_offload_small_passthrough_and_exempt()
+    test_memory_write_update_index()
+    test_claude_backend_cmd()
+    test_event_normalization_and_log()
+    test_rate_limit_and_model_usage()
+    test_runner_writes_mcp_config()
     test_context_bar()
+    test_workspace_sandbox()
+    print("\nAll smoke tests passed.")

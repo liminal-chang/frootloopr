@@ -112,7 +112,8 @@ async def _spawn(backend, task: str, context_hint: str) -> str:
 
     _events.write(
         agent, "spawn_end", backend=backend.name, model=result.model or backend.model,
-        usage=result.usage, duration_s=round(time.monotonic() - started, 1),
+        usage=result.usage, model_usage=result.model_usage,
+        duration_s=round(time.monotonic() - started, 1),
         result_chars=len(result.text),
     )
     return result.text or "(subagent returned no text)"

@@ -129,4 +129,5 @@ class ClaudeBackend:
             session_id=result_record.get("session_id"),
             usage=result_record.get("usage"),
             model=model,
+            model_usage=result_record.get("modelUsage"),
         )
